@@ -1,0 +1,75 @@
+/* Copyright (c) 2026 shipap. SPDX-License-Identifier: AGPL-3.0-only */
+.swipe-toast {
+  box-sizing: border-box;
+}
+.swipe-toast:not(.swipe-toast--inline) {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  max-width: calc(100vw - 40px);
+  z-index: 100;
+}
+.swipe-toast__card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  box-sizing: border-box;
+  padding: 14px;
+  color: var(--ink, #f5f5f5);
+  background: var(--surface, #202020);
+  border: 1px solid var(--border, #666);
+  overflow-wrap: anywhere;
+  touch-action: pan-x;
+}
+.swipe-toast__body {
+  flex: 1;
+  min-width: 0;
+}
+.swipe-toast__title {
+  font-weight: 650;
+}
+.swipe-toast__description {
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.swipe-toast__action {
+  margin-top: 10px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.swipe-toast__close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.swipe-toast__card:focus-visible,
+.swipe-toast__card button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .swipe-toast__card {
+    animation: toast-appear 160ms ease-out;
+  }
+  @keyframes toast-appear {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}

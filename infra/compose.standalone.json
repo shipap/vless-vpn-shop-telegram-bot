@@ -1,0 +1,147 @@
+{
+  "name": "${LOCAL_COMPOSE_PROJECT:?Сначала выполните scripts/setup_local_docker.py}",
+  "x-profile-note": "Синтетический стенд: приложение без внешнего выхода, веб-порты localhost через отдельный прокси. Реальные интеграции и Telegram polling отключены.",
+  "services": {
+    "postgres": {
+      "image": "postgres:18.4",
+      "command": ["postgres", "-p", "55439"],
+      "environment": {
+        "POSTGRES_USER": "sunrise_app",
+        "POSTGRES_DB": "sunrise_test",
+        "POSTGRES_PASSWORD": "${LOCAL_POSTGRES_PASSWORD:?Нужен локальный случайный пароль}"
+      },
+      "volumes": ["database:/var/lib/postgresql"],
+      "networks": ["local"],
+      "healthcheck": {
+        "test": ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "55439", "-U", "sunrise_app", "-d", "sunrise_test"],
+        "interval": "3s", "timeout": "3s", "retries": 20
+      },
+      "restart": "unless-stopped"
+    },
+    "ingress": {
+      "image": "nginx:1.30.4-alpine",
+      "user": "101:101",
+      "entrypoint": ["nginx"],
+      "command": ["-g", "daemon off;"],
+      "ports": [
+        "127.0.0.1:${LOCAL_LANDING_PORT:?Нужен порт лендинга}:3100",
+        "127.0.0.1:${LOCAL_DASHBOARD_PORT:?Нужен порт кабинета}:3200"
+      ],
+      "volumes": [{"type": "bind", "source": "./nginx.local.conf", "target": "/etc/nginx/nginx.conf", "read_only": true, "bind": {"create_host_path": false}}],
+      "networks": ["local", "edge"],
+      "depends_on": {"landing": {"condition": "service_started"}, "dashboard": {"condition": "service_started"}},
+      "read_only": true,
+      "tmpfs": ["/tmp"],
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "healthcheck": {
+        "test": ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3100/"],
+        "interval": "3s", "timeout": "3s", "retries": 20
+      },
+      "restart": "unless-stopped"
+    },
+    "redis": {
+      "image": "redis:8.2.3",
+      "network_mode": "service:postgres",
+      "user": "redis",
+      "command": ["redis-server", "--bind", "127.0.0.1", "--port", "56379", "--protected-mode", "yes", "--save", "", "--appendonly", "no", "--requirepass", "${LOCAL_REDIS_PASSWORD:?Нужен локальный случайный пароль Redis}"],
+      "environment": {"REDISCLI_AUTH": "${LOCAL_REDIS_PASSWORD:?Нужен локальный случайный пароль Redis}"},
+      "depends_on": {"postgres": {"condition": "service_healthy"}},
+      "read_only": true,
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "healthcheck": {
+        "test": ["CMD", "redis-cli", "-h", "127.0.0.1", "-p", "56379", "ping"],
+        "interval": "3s", "timeout": "3s", "retries": 20
+      },
+      "restart": "unless-stopped"
+    },
+    "init": {
+      "build": {"context": "..", "dockerfile": "infra/Dockerfile.standalone"},
+      "image": "${LOCAL_COMPOSE_PROJECT:?Нужен локальный проект}-backend:local",
+      "network_mode": "service:postgres",
+      "env_file": ["../.env.docker"],
+      "environment": {
+        "SUNRISE_RUNTIME_MODE": "isolated", "SUNRISE_LOCAL_TEST": "true",
+        "SUNRISE_ROLLYPAY_TEST_AUTHORIZED": "false", "SUNRISE_RECURRING_TEST_AUTHORIZED": "false",
+        "SUNRISE_PANEL_TEST_AUTHORIZED": "false", "SUNRISE_PANEL_WEBHOOK_TEST_AUTHORIZED": "false",
+        "SUNRISE_SMTP_TEST_AUTHORIZED": "false", "SUNRISE_PUSH_TEST_AUTHORIZED": "false", "SUNRISE_EMOJI_TEST_AUTHORIZED": "false"
+      },
+      "command": ["python", "scripts/setup_local_docker.py", "init"],
+      "depends_on": {"postgres": {"condition": "service_healthy"}, "redis": {"condition": "service_healthy"}},
+      "read_only": true,
+      "tmpfs": ["/tmp"],
+      "volumes": ["runtime:/app/.private"],
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "restart": "no"
+    },
+    "api": {
+      "image": "${LOCAL_COMPOSE_PROJECT:?Нужен локальный проект}-backend:local",
+      "network_mode": "service:postgres",
+      "env_file": ["../.env.docker"],
+      "environment": {
+        "SUNRISE_RUNTIME_MODE": "isolated", "SUNRISE_LOCAL_TEST": "true",
+        "SUNRISE_ROLLYPAY_TEST_AUTHORIZED": "false", "SUNRISE_RECURRING_TEST_AUTHORIZED": "false",
+        "SUNRISE_PANEL_TEST_AUTHORIZED": "false", "SUNRISE_PANEL_WEBHOOK_TEST_AUTHORIZED": "false",
+        "SUNRISE_SMTP_TEST_AUTHORIZED": "false", "SUNRISE_PUSH_TEST_AUTHORIZED": "false", "SUNRISE_EMOJI_TEST_AUTHORIZED": "false"
+      },
+      "depends_on": {"init": {"condition": "service_completed_successfully"}, "redis": {"condition": "service_healthy"}},
+      "read_only": true,
+      "tmpfs": ["/tmp"],
+      "volumes": ["runtime:/app/.private"],
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "healthcheck": {
+        "test": ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/api/v1/health', timeout=2).close()"],
+        "interval": "5s", "timeout": "3s", "retries": 20
+      },
+      "restart": "unless-stopped"
+    },
+    "worker": {
+      "image": "${LOCAL_COMPOSE_PROJECT:?Нужен локальный проект}-backend:local",
+      "network_mode": "service:postgres",
+      "env_file": ["../.env.docker"],
+      "environment": {
+        "SUNRISE_RUNTIME_MODE": "isolated", "SUNRISE_LOCAL_TEST": "true",
+        "SUNRISE_ROLLYPAY_TEST_AUTHORIZED": "false", "SUNRISE_RECURRING_TEST_AUTHORIZED": "false",
+        "SUNRISE_PANEL_TEST_AUTHORIZED": "false", "SUNRISE_PANEL_WEBHOOK_TEST_AUTHORIZED": "false",
+        "SUNRISE_SMTP_TEST_AUTHORIZED": "false", "SUNRISE_PUSH_TEST_AUTHORIZED": "false", "SUNRISE_EMOJI_TEST_AUTHORIZED": "false"
+      },
+      "command": ["python", "-m", "sunrise_worker.main"],
+      "depends_on": {"api": {"condition": "service_healthy"}},
+      "read_only": true,
+      "tmpfs": ["/tmp"],
+      "volumes": ["runtime:/app/.private"],
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "restart": "unless-stopped"
+    },
+    "landing": {
+      "build": {"context": "..", "dockerfile": "infra/Dockerfile.web"},
+      "image": "${LOCAL_COMPOSE_PROJECT:?Нужен локальный проект}-web:local",
+      "network_mode": "service:postgres",
+      "environment": {"WEB_API_BASE_URL": "http://127.0.0.1:8100"},
+      "command": ["npm", "run", "preview:landing", "--", "--host", "0.0.0.0", "--port", "3100", "--strictPort"],
+      "depends_on": {"api": {"condition": "service_healthy"}},
+      "read_only": true,
+      "tmpfs": ["/tmp", "/app/node_modules/.vite-temp:uid=1000,gid=1000,mode=0700"],
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "restart": "unless-stopped"
+    },
+    "dashboard": {
+      "image": "${LOCAL_COMPOSE_PROJECT:?Нужен локальный проект}-web:local",
+      "network_mode": "service:postgres",
+      "environment": {"WEB_API_BASE_URL": "http://127.0.0.1:8100"},
+      "depends_on": {"api": {"condition": "service_healthy"}},
+      "read_only": true,
+      "tmpfs": ["/tmp", "/app/node_modules/.vite-temp:uid=1000,gid=1000,mode=0700"],
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "restart": "unless-stopped"
+    }
+  },
+  "networks": {"local": {"internal": true}, "edge": {}},
+  "volumes": {"database": {}, "runtime": {}}
+}

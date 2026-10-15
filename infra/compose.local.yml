@@ -1,0 +1,24 @@
+name: sunrise-isolated
+services:
+  postgres:
+    image: postgres:18.4
+    environment:
+      POSTGRES_USER: sunrise_app
+      POSTGRES_DB: sunrise_test
+      POSTGRES_PASSWORD: ${LOCAL_POSTGRES_PASSWORD:?Укажите отдельный тестовый пароль}
+    ports:
+      - "127.0.0.1:55439:5432"
+    volumes:
+      - sunrise_test_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sunrise_app -d sunrise_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis:8.2.3
+    ports:
+      - "127.0.0.1:56379:6379"
+    command: ["redis-server", "--bind", "0.0.0.0", "--protected-mode", "yes", "--appendonly", "no", "--requirepass", "${LOCAL_REDIS_PASSWORD:?Укажите отдельный тестовый пароль Redis}"]
+volumes:
+  sunrise_test_data:

@@ -1,0 +1,49 @@
+body[data-telegram-mini-app="true"] {
+  --telegram-safe-top: calc(
+    max(var(--telegram-device-safe-top, 0px), env(safe-area-inset-top, 0px)) +
+      var(--telegram-content-safe-top, 0px)
+  );
+  --telegram-safe-right: calc(
+    max(
+        var(--telegram-device-safe-right, 0px),
+        env(safe-area-inset-right, 0px)
+      ) +
+      var(--telegram-content-safe-right, 0px)
+  );
+  --telegram-safe-bottom: calc(
+    max(
+        var(--telegram-device-safe-bottom, 0px),
+        env(safe-area-inset-bottom, 0px)
+      ) +
+      var(--telegram-content-safe-bottom, 0px)
+  );
+  --telegram-safe-left: calc(
+    max(var(--telegram-device-safe-left, 0px), env(safe-area-inset-left, 0px)) +
+      var(--telegram-content-safe-left, 0px)
+  );
+}
+body[data-telegram-mini-app="true"] #root {
+  padding: var(--telegram-safe-top) var(--telegram-safe-right)
+    var(--telegram-safe-bottom) var(--telegram-safe-left);
+}
+body[data-telegram-mini-app="true"] :is(.dashboard-layout, .login-layout) {
+  min-height: calc(
+    var(--telegram-viewport-height, 100dvh) - var(--telegram-safe-top) -
+      var(--telegram-safe-bottom)
+  );
+}
+body[data-telegram-mini-app="true"] .sidebar {
+  top: var(--telegram-safe-top);
+  bottom: var(--telegram-safe-bottom);
+  left: var(--telegram-safe-left);
+}
+body[data-telegram-mini-app="true"] .mobile-header {
+  top: var(--telegram-safe-top);
+}
+@media (max-width: 700px) {
+  body[data-telegram-mini-app="true"] .sidebar {
+    top: calc(73px + var(--telegram-safe-top));
+    right: var(--telegram-safe-right);
+    width: auto;
+  }
+}

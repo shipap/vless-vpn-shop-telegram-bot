@@ -1,0 +1,47 @@
+import type { components } from "./schema";
+export type Catalog = components["schemas"]["CatalogDto"];
+export type InstanceTerminology = {
+  service_label: string;
+  service_summary: string;
+  connections_label: string;
+  connect_label: string;
+  client_label: string;
+  connection_label: string;
+  hero_title: string;
+  welcome_body?: string;
+  provisioning_pending_body?: string;
+  provisioning_ready_body?: string;
+  client_installation_step?: string;
+};
+export type PublicInstance = {
+  app_name: string;
+  app_short_name: string;
+  app_slug: string;
+  app_description: string;
+  visual_profile: "neutral" | "private";
+  search_indexing_enabled?: boolean;
+  terminology?: InstanceTerminology;
+  accent_color: string;
+  sender_name: string;
+  public_site_url: string | null;
+  dashboard_url: string | null;
+  telegram_bot_username: string | null;
+  support_url: string | null;
+  support_email: string | null;
+  logo_url: string | null;
+  favicon_url: string | null;
+  hero_url: string | null;
+  og_image_url: string | null;
+};
+export type PublicConfig = components["schemas"]["ConfigDto"] & {
+  instance?: PublicInstance;
+};
+export type Session = components["schemas"]["AuthDto"];
+export type Dashboard = components["schemas"]["DashboardDto"];
+export type Product = Catalog["products"][number];
+export type Subscription = Dashboard["subscriptions"][number];
+export type Quote = components["schemas"]["QuoteDto"];
+export type Order = components["schemas"]["OrderDto"];
+export type Legal = components["schemas"]["LegalDto"];
+export type LegalStatus = components["schemas"]["LegalStatusDto"];
+export type LegalDocument = components["schemas"]["LegalDocument"];

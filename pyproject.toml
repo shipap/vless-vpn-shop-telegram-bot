@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=83.0.0", "wheel>=0.46.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sunrise-shop"
+version = "0.1.0"
+description = "Магазин VPN-подписок с Telegram-ботом и личным кабинетом."
+license = "AGPL-3.0-only"
+authors = [{name = "shipap"}]
+requires-python = ">=3.12"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "SQLAlchemy>=2.0,<3", "psycopg[binary]>=3.2,<4", "alembic>=1.14,<2", "redis>=5,<7", "httpx>=0.28,<1", "pydantic-settings>=2.7,<3", "email-validator>=2.2,<3", "pyotp>=2.9,<3", "PyJWT>=2.10,<3", "argon2-cffi>=23,<26", "cryptography>=44", "aiogram>=3.17,<4", "pywebpush>=2,<3", "qrcode[pil]>=8,<9"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "fakeredis[lua]>=2.28,<3", "hypothesis>=6,<7", "ruff>=0.11"]
+
+[tool.setuptools]
+packages = ["sunrise_core", "sunrise_infrastructure", "sunrise_api", "sunrise_worker", "sunrise_bot"]
+package-dir = {sunrise_core = "packages/core/src/sunrise_core", sunrise_infrastructure = "packages/infrastructure/src/sunrise_infrastructure", sunrise_api = "apps/api/src/sunrise_api", sunrise_worker = "apps/worker/src/sunrise_worker", sunrise_bot = "apps/bot/src/sunrise_bot"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+cache_dir = ".artifacts/pytest-cache"
+markers = ["postgres: requires isolated synthetic PostgreSQL", "redis: requires Redis-compatible service"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "S", "BLE"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+# Зафиксированные применённые миграции не переписываются ради форматирования импортов.
+"migrations/versions/000[2-8]_*.py" = ["I001"]

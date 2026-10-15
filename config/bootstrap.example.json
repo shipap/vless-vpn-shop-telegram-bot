@@ -1,0 +1,106 @@
+{
+  "products": [
+    {
+      "id": "standard",
+      "code": "standard",
+      "name": "Стандартный",
+      "description": "Для повседневного подключения.",
+      "tier_level": 1,
+      "price": "99.00",
+      "currency": "RUB",
+      "included_devices": 4,
+      "extra_device_price": "50.00",
+      "presentation": {
+        "extra_device_rules": [
+          {
+            "through_extra": 5,
+            "price": "50.00"
+          },
+          {
+            "through_extra": 9,
+            "price": "100.00"
+          },
+          {
+            "through_extra": null,
+            "price": "150.00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "universal",
+      "code": "universal",
+      "name": "Универсальный",
+      "description": "Дополнительные способы подключения при ограничениях сети.",
+      "tier_level": 2,
+      "price": "249.00",
+      "currency": "RUB",
+      "included_devices": 4,
+      "extra_device_price": "50.00",
+      "presentation": {
+        "extra_device_rules": [
+          {
+            "through_extra": 5,
+            "price": "50.00"
+          },
+          {
+            "through_extra": 9,
+            "price": "100.00"
+          },
+          {
+            "through_extra": null,
+            "price": "150.00"
+          }
+        ]
+      }
+    }
+  ],
+  "settings": {
+    "recurring": {
+      "enabled": false
+    },
+    "periods": [
+      {
+        "days": 30,
+        "months": 1,
+        "discount_percent": "0"
+      },
+      {
+        "days": 90,
+        "months": 3,
+        "discount_percent": "10"
+      },
+      {
+        "days": 180,
+        "months": 6,
+        "discount_percent": "15"
+      },
+      {
+        "days": 365,
+        "months": 12,
+        "discount_percent": "20"
+      }
+    ],
+    "discounts": {
+      "cap": "40",
+      "bonus_cap": "50",
+      "secondary": [],
+      "referral_percent": "15",
+      "loyalty_period_days": 30,
+      "loyalty_milestones": [
+        {
+          "elapsed_periods": 2,
+          "percent": "5"
+        },
+        {
+          "elapsed_periods": 6,
+          "percent": "10"
+        },
+        {
+          "elapsed_periods": 12,
+          "percent": "20"
+        }
+      ]
+    }
+  }
+}

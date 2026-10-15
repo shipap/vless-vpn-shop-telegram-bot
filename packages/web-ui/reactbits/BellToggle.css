@@ -1,0 +1,48 @@
+/* Copyright (c) 2026 shipap. SPDX-License-Identifier: AGPL-3.0-only */
+.bell-toggle {
+  display: inline-flex;
+}
+.bell-toggle__button {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 8px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.bell-toggle__button[data-size="sm"] {
+  width: 36px;
+  height: 36px;
+}
+.bell-toggle__button[data-size="lg"] {
+  width: 52px;
+  height: 52px;
+}
+.bell-toggle__button:hover {
+  border-color: currentColor;
+}
+.bell-toggle__button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+.bell-toggle__button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.bell-toggle__badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 16px;
+  padding: 1px 3px;
+  border-radius: 9px;
+  background: var(--ink, #f5f5f5);
+  color: var(--surface, #202020);
+  font: 600 10px/14px sans-serif;
+  text-align: center;
+}

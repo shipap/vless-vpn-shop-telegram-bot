@@ -1,0 +1,18 @@
+# Локальный preview сохраняет действующие Vite middleware и реальные admin 404.
+FROM node:24-bookworm-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY LICENSE NOTICE ./
+COPY docs/THIRD_PARTY_NOTICES.md ./docs/
+RUN npm ci --no-audit --no-fund
+COPY tsconfig.json tsconfig.runtime.json ./
+COPY apps/web ./apps/web
+COPY packages/web-ui ./packages/web-ui
+COPY packages/api-client ./packages/api-client
+RUN npm exec -- tsc --project tsconfig.runtime.json \
+    && npm exec -- vite build --config apps/web/dashboard/vite.config.ts \
+    && npm exec -- vite build --config apps/web/landing/vite.config.ts \
+    && chown -R node:node /app/.artifacts
+USER node
+ENV WEB_API_BASE_URL=http://127.0.0.1:8100
+CMD ["npm", "run", "preview:dashboard", "--", "--host", "0.0.0.0", "--port", "3200", "--strictPort"]

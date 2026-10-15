@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "scope_id": "vpn-shop-production",
+  "database_schema": "shop",
+  "redis_key_prefix": "vpn-shop:production:",
+  "panel": {
+    "version": "3.4.5",
+    "internal_squads": [],
+    "external_squads": [],
+    "subscription_hosts": [],
+    "node_uuids": []
+  }
+}

@@ -1,0 +1,22 @@
+name: Предложение / Feature request
+description: Улучшение для операторов магазина или пользователей.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу нужно решить
+      description: Опишите сценарий использования без персональных данных клиентов.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемое поведение
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы
+      description: Если уже есть обходной способ, расскажите о нём.

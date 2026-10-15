@@ -1,0 +1,12 @@
+# Только два публичных ключа localStorage; реальные токены не исключаются.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "Public immutable campaign storage names, not API credentials"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['^sunrise\.campaign\.(proofs|visitor)\.v1$']
+paths = ['^packages[/\\]web-ui[/\\]campaign\.ts$']

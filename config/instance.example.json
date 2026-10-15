@@ -1,0 +1,29 @@
+{
+  "app_name": "VLESS VPN Shop",
+  "app_short_name": "VLESS VPN Shop",
+  "app_slug": "vpn-shop",
+  "app_description": "Подписки VPN и управление подключением.",
+  "visual_profile": "neutral",
+  "terminology": {
+    "service_label": "VPN",
+    "service_summary": "VPN для ваших устройств",
+    "connections_label": "Мой VPN",
+    "connect_label": "Подключить VPN",
+    "client_label": "VPN-приложение",
+    "client_installation_step": "Установите совместимый VPN-клиент, например Incy или Happ.",
+    "connection_label": "VPN-подключение",
+    "hero_title": "Ваш VPN."
+  },
+  "accent_color": "#F0A45D",
+  "public_site_url": "http://127.0.0.1:3100",
+  "dashboard_url": "http://127.0.0.1:3200",
+  "subscription_public_origin": null,
+  "telegram_bot_username": null,
+  "support_url": null,
+  "support_email": null,
+  "asset_root": "instance-assets",
+  "logo_asset": null,
+  "favicon_asset": null,
+  "hero_asset": null,
+  "og_image_asset": null
+}

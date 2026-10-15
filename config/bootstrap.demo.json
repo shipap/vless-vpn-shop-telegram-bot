@@ -1,0 +1,14 @@
+{
+  "products": [{
+    "id": "demo-basic", "code": "demo-basic", "name": "Базовый VPN",
+    "description": "Нейтральный тариф локального демонстрационного экземпляра.",
+    "tier_level": 1, "price": "149.00", "currency": "RUB", "included_devices": 2,
+    "extra_device_price": "29.00", "presentation": {}, "content": {}, "available": true
+  }],
+  "settings": {
+    "recurring": {"enabled": false},
+    "periods": [{"days": 30, "months": "1", "discount_percent": "0"}],
+    "discounts": {"cap": "25", "bonus_cap": "20", "secondary": [], "referral_percent": "7",
+      "loyalty_period_days": 30, "loyalty_milestones": [{"elapsed_periods": 4, "percent": "5"}]}
+  }
+}

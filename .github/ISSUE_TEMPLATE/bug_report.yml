@@ -1,0 +1,34 @@
+name: Ошибка / Bug report
+description: Воспроизводимая ошибка в боте, сайте или установке.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Не публикуйте токены, .env, дампы, данные клиентов и рабочие ссылки подписок.
+        Об уязвимостях сообщайте приватно через SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Версия или commit
+      placeholder: v0.1.0-rc.1
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Как воспроизвести
+      description: Шаги и минимальный пример с синтетическими данными.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Ожидаемый и фактический результат
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Окружение
+      description: ОС, способ установки, версии Python/Node/Docker и относящийся к ошибке журнал без секретов.

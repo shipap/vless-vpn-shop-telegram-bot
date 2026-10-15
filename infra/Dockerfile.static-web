@@ -1,0 +1,35 @@
+# Сборка без instance metadata fetch; публичная конфигурация подставляется без сети.
+FROM node:24-bookworm-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY LICENSE NOTICE ./
+COPY docs/THIRD_PARTY_NOTICES.md ./docs/
+RUN npm ci --no-audit --no-fund
+COPY tsconfig.json tsconfig.runtime.json ./
+COPY apps/web ./apps/web
+COPY packages/web-ui ./packages/web-ui
+COPY packages/api-client ./packages/api-client
+COPY infra/vite.static.config.ts ./infra/
+COPY scripts/render_static_instance.ts ./scripts/
+RUN npm exec -- tsc --project tsconfig.runtime.json \
+    && npm exec -- vite build --config infra/vite.static.config.ts --mode dashboard \
+    && npm exec -- vite build --config infra/vite.static.config.ts --mode landing
+
+FROM node:24-bookworm-slim
+ARG FRONTEND_SOURCE_SHA256
+LABEL org.opencontainers.image.source-revision.expected=$FRONTEND_SOURCE_SHA256
+WORKDIR /app
+COPY LICENSE NOTICE ./
+COPY docs/THIRD_PARTY_NOTICES.md ./licenses/
+COPY packages/web-ui/reactbits/LICENSE.md ./licenses/ReactBits.LICENSE.md
+COPY packages/web-ui/fonts/TwemojiCountryFlags.LICENSE.md ./licenses/
+COPY --from=build /app/.artifacts/web/production-static ./built
+COPY apps/web/instance-meta.ts ./apps/web/
+COPY apps/web/public/sw.js ./apps/web/public/
+COPY packages/web-ui/instance-value.ts packages/web-ui/terminology.ts packages/web-ui/search-indexing.ts ./packages/web-ui/
+COPY scripts/render_static_instance.ts ./scripts/
+RUN groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app \
+    && install -d -o app -g app -m 0755 /output
+USER 10001:10001
+CMD ["node", "scripts/render_static_instance.ts", "/app/built", "/output", "/app/public-instance.json"]

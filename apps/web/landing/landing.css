@@ -1,0 +1,793 @@
+:root {
+  --paper: #0c0d0e;
+  --surface: #121314;
+  --ink: #f8f7f4;
+  --muted: #b5b3b0;
+  --line: #29292a;
+  --accent: #ffb44e;
+  --accent-hover: #ffc676;
+  --red: #ffaca5;
+  --sunrise-content: 1184px;
+  --sunrise-inset: 40px;
+  --sunrise-section-space: 64px;
+  --sunrise-heading-column: 280px;
+  --sunrise-gap: 42px;
+  --sunrise-radius: 14px;
+  --sunrise-fast: 180ms;
+  color-scheme: dark;
+}
+body {
+  background: var(--paper);
+}
+.sunrise-landing {
+  overflow: clip;
+  font-size: 15px;
+}
+.sunrise-landing .page-width {
+  width: min(var(--sunrise-content), calc(100% - var(--sunrise-inset) * 2));
+  margin-inline: auto;
+}
+.sunrise-landing h1,
+.sunrise-landing h2,
+.sunrise-landing h3 {
+  font-weight: 650;
+}
+.sunrise-landing h2 {
+  font-size: 34px;
+  line-height: 1.2;
+  letter-spacing: -0.045em;
+}
+.sunrise-landing a {
+  transition:
+    color var(--sunrise-fast),
+    background-color var(--sunrise-fast),
+    border-color var(--sunrise-fast);
+}
+.sunrise-landing :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 5px;
+}
+.sunrise-landing .brand {
+  font-size: 31px;
+  letter-spacing: -0.07em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.sunrise-landing .brand small {
+  font-size: 14px;
+  letter-spacing: -0.025em;
+  font-weight: 650;
+}
+.sunrise-header {
+  min-height: 112px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+}
+.sunrise-header nav,
+.sunrise-footer nav {
+  display: flex;
+  gap: 30px;
+}
+.sunrise-header nav a,
+.sunrise-footer nav a {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.sunrise-header nav {
+  font-size: 13px;
+}
+.sunrise-account {
+  display: inline-flex;
+  gap: 13px;
+  align-items: center;
+  min-height: 46px;
+  padding: 10px 20px;
+  border: 1px solid #93652e;
+  border-radius: 9px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.sunrise-account:hover {
+  border-color: var(--accent);
+  background: #ffb44e08;
+}
+.sunrise-hero {
+  position: relative;
+  min-height: 595px;
+  display: grid;
+  grid-template-columns: 1.12fr 1fr;
+  align-items: center;
+  isolation: isolate;
+}
+.sunrise-hero-copy {
+  position: relative;
+  z-index: 2;
+  padding-block: 40px 94px;
+}
+.sunrise-eyebrow {
+  font-size: 10px;
+  font-weight: 550;
+  letter-spacing: 0.25em;
+  margin-bottom: 22px;
+}
+.sunrise-hero h1 {
+  font-size: clamp(64px, 6.2vw, 85px);
+  line-height: 1.04;
+  letter-spacing: -0.06em;
+  white-space: nowrap;
+}
+.sunrise-hero h1 span {
+  color: var(--accent);
+}
+.sunrise-lead {
+  font-size: 19px;
+  line-height: 1.65;
+  max-width: 360px;
+  color: #e0ded9;
+  margin-block: 25px 32px;
+}
+.sunrise-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 38px;
+  min-height: 61px;
+  min-width: 248px;
+  padding: 16px 28px;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 750;
+  color: #1a1309;
+  background: linear-gradient(110deg, #ffc360, #f9a23e);
+}
+.sunrise-cta:hover {
+  color: #1a1309;
+  background: var(--accent-hover);
+}
+.sunrise-visual {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 660px;
+  height: 565px;
+  z-index: 0;
+}
+.sunrise-mascot {
+  position: absolute;
+  width: 585px;
+  height: 585px;
+  object-fit: contain;
+  right: 0;
+  bottom: -24px;
+  z-index: 1;
+  mask-image: linear-gradient(#000 86%, transparent 100%);
+}
+.sunrise-horizon {
+  position: absolute;
+  inset: 42px -100px 0 -150px;
+  overflow: hidden;
+  background: radial-gradient(
+    ellipse at 55% 71%,
+    #fba23821,
+    #b36a0810 25%,
+    transparent 62%
+  );
+}
+.sunrise-horizon::before {
+  content: "";
+  position: absolute;
+  top: 34px;
+  left: 154px;
+  width: 410px;
+  height: 410px;
+  border: 1px solid #fbb653cc;
+  border-radius: 50%;
+  box-shadow:
+    0 0 18px #ffae3345,
+    inset 0 0 22px #ffae331c;
+  mask-image: linear-gradient(#000 25%, transparent 81%);
+}
+.sunrise-horizon::after {
+  content: "";
+  position: absolute;
+  inset: 340px 0 auto;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    #f5a03665 45%,
+    #f5a03665 60%,
+    transparent
+  );
+  box-shadow: 0 9px 45px 4px #fba23814;
+}
+.sunrise-section {
+  padding-block: var(--sunrise-section-space);
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 28px;
+}
+.sunrise-section-grid {
+  display: grid;
+  grid-template-columns: var(--sunrise-heading-column) minmax(0, 1fr);
+  gap: var(--sunrise-gap);
+}
+.sunrise-section-heading {
+  padding-top: 10px;
+}
+.sunrise-section-heading p {
+  margin-top: 17px;
+  max-width: 240px;
+  line-height: 1.7;
+}
+.sunrise-tariffs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 22px;
+}
+.sunrise-tariff {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 29px;
+  border: 1px solid var(--line);
+  border-radius: var(--sunrise-radius);
+  background: linear-gradient(130deg, #171819, #111213);
+  overflow-wrap: anywhere;
+  transition:
+    border-color var(--sunrise-fast),
+    box-shadow var(--sunrise-fast);
+}
+.sunrise-tariff:hover {
+  border-color: #6c5536;
+  box-shadow: 0 0 25px #fba23807;
+}
+.sunrise-tariff.is-highlighted {
+  border-color: #c98d3b;
+  background: linear-gradient(125deg, #271f16, #131313 75%);
+}
+.sunrise-tariff-icon {
+  width: 49px;
+  height: 49px;
+  border: 1px solid #a86d2c;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  margin-bottom: 25px;
+  font-size: 25px;
+}
+.sunrise-tariff h3 {
+  font-size: 24px;
+  line-height: 1.25;
+  margin-bottom: 13px;
+}
+.sunrise-tariff-description {
+  color: var(--muted);
+  line-height: 1.75;
+  font-size: 14px;
+}
+.sunrise-devices {
+  font-size: 12px;
+  margin-block: 18px 22px;
+}
+.sunrise-devices strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.sunrise-tariff-bottom {
+  margin-top: auto;
+  padding-top: 19px;
+  border-top: 1px solid #3a3630;
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  justify-content: space-between;
+}
+.sunrise-price {
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.sunrise-price small {
+  display: block;
+  color: var(--muted);
+  font-weight: 450;
+  font-size: 12px;
+  letter-spacing: 0;
+  margin-top: 4px;
+}
+.sunrise-tariff-action {
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  width: 47px;
+  height: 47px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.sunrise-tariff-action:hover {
+  background: var(--accent);
+  color: #18120a;
+}
+.sunrise-unavailable {
+  color: var(--muted);
+  font-size: 12px;
+  max-width: 115px;
+}
+.sunrise-empty {
+  padding: 27px;
+  border: 1px solid var(--line);
+  border-radius: var(--sunrise-radius);
+}
+.sunrise-empty h3 {
+  font-size: 22px;
+}
+.sunrise-empty p {
+  margin-top: 12px;
+}
+.sunrise-empty a,
+.sunrise-text-link {
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  margin-top: 14px;
+}
+.sunrise-steps {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 34px;
+}
+.sunrise-steps li {
+  position: relative;
+}
+.sunrise-step-index {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  color: var(--accent);
+  font-size: 20px;
+}
+.sunrise-steps li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 24px;
+  height: 1px;
+  left: 69px;
+  right: 0;
+  background: #43403b;
+}
+.sunrise-steps h3 {
+  margin-top: 22px;
+  font-size: 17px;
+  letter-spacing: -0.025em;
+}
+.sunrise-steps p,
+.sunrise-step-body {
+  font-size: 12px;
+  line-height: 1.8;
+  margin-top: 12px;
+}
+.sunrise-faq details {
+  border-bottom: 1px solid #383633;
+}
+.sunrise-faq summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 61px;
+  gap: 24px;
+  font-size: 15px;
+  padding-block: 14px;
+  list-style: none;
+}
+.sunrise-faq summary::-webkit-details-marker {
+  display: none;
+}
+.sunrise-faq summary span {
+  font-size: 26px;
+  font-weight: 350;
+  color: #e2dfda;
+  transition: transform var(--sunrise-fast);
+}
+.sunrise-faq details[open] summary span {
+  transform: rotate(45deg);
+}
+.sunrise-faq-answer {
+  color: var(--muted);
+  padding: 0 36px 21px 0;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.sunrise-faq-answer a {
+  text-decoration: underline;
+}
+.sunrise-outro {
+  padding-block: 56px;
+  border-block: 1px solid #604323;
+  background: linear-gradient(110deg, #3b2612 -60%, #17130e 50%, #2b1d10 150%);
+}
+.sunrise-outro > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 38px;
+}
+.sunrise-outro p {
+  margin-top: 12px;
+  font-size: 14px;
+}
+.sunrise-footer {
+  padding-block: 50px 32px;
+  font-size: 12px;
+}
+.sunrise-footer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.sunrise-footer-top > span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.sunrise-footer .brand {
+  font-size: 26px;
+}
+.sunrise-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 26px;
+  border-top: 1px solid var(--line);
+  margin-top: 25px;
+  padding-top: 17px;
+  color: var(--muted);
+}
+.sunrise-footer-links a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+.sunrise-landing .error-state {
+  background: #281d1a;
+  border-color: #725048;
+  color: var(--ink);
+}
+.sunrise-landing .button.secondary {
+  color: var(--ink);
+  border-color: #8c7c6d;
+  background: #1d1915;
+}
+@media (min-width: 1050px) {
+  .sunrise-tariffs:has(> :nth-child(3)) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 15px;
+  }
+  .sunrise-tariffs:has(> :nth-child(3)) .sunrise-tariff {
+    padding: 22px;
+  }
+}
+@media (max-width: 1050px) {
+  :root {
+    --sunrise-inset: 32px;
+    --sunrise-heading-column: 215px;
+    --sunrise-gap: 28px;
+  }
+  .sunrise-header {
+    min-height: 100px;
+  }
+  .sunrise-header nav {
+    gap: 19px;
+    font-size: 12px;
+  }
+  .sunrise-hero {
+    min-height: 560px;
+  }
+  .sunrise-hero h1 {
+    font-size: 68px;
+  }
+  .sunrise-visual {
+    right: 0;
+    width: 50%;
+    height: 520px;
+  }
+  .sunrise-mascot {
+    width: min(480px, 48vw);
+    height: min(480px, 48vw);
+  }
+  .sunrise-section-grid {
+    grid-template-columns: 1fr;
+    gap: 29px;
+  }
+  .sunrise-section-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 24px;
+  }
+  .sunrise-section-heading p {
+    margin: 0;
+    max-width: 300px;
+  }
+  .sunrise-section-heading .sunrise-text-link {
+    margin: 0;
+  }
+  .sunrise-tariffs {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  }
+  .sunrise-footer nav {
+    gap: 18px;
+  }
+}
+@media (max-width: 700px) {
+  :root {
+    --sunrise-inset: 24px;
+    --sunrise-section-space: 39px;
+  }
+  .sunrise-landing h2 {
+    font-size: 29px;
+  }
+  .sunrise-header {
+    min-height: 83px;
+    gap: 16px;
+  }
+  .sunrise-header .brand {
+    font-size: 26px;
+  }
+  .sunrise-header .brand small {
+    font-size: 11px;
+  }
+  .sunrise-header nav {
+    display: none;
+  }
+  .sunrise-account {
+    font-size: 11px;
+    padding: 8px 11px;
+    gap: 6px;
+    min-height: 44px;
+  }
+  .sunrise-hero {
+    min-height: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sunrise-hero-copy {
+    padding-block: 38px 0;
+  }
+  .sunrise-eyebrow {
+    font-size: 8px;
+    letter-spacing: 0.19em;
+    margin-bottom: 17px;
+  }
+  .sunrise-hero h1 {
+    font-size: clamp(43px, 11.7vw, 66px);
+  }
+  .sunrise-lead {
+    font-size: 15px;
+    line-height: 1.7;
+    max-width: 295px;
+    margin-block: 21px 24px;
+  }
+  .sunrise-cta {
+    min-height: 55px;
+    min-width: 225px;
+    font-size: 14px;
+    padding: 14px 23px;
+  }
+  .sunrise-visual {
+    position: relative;
+    width: calc(100% + 48px);
+    right: auto;
+    margin-left: -24px;
+    height: 315px;
+    margin-top: 20px;
+  }
+  .sunrise-mascot {
+    width: min(365px, 100vw);
+    height: min(365px, 100vw);
+    right: 50%;
+    transform: translateX(50%);
+    bottom: -23px;
+  }
+  .sunrise-horizon {
+    inset: 5px -35px 0;
+  }
+  .sunrise-horizon::before {
+    width: 290px;
+    height: 290px;
+    top: 20px;
+    left: calc(50% - 145px);
+  }
+  .sunrise-horizon::after {
+    top: 215px;
+  }
+  .sunrise-section-heading {
+    display: block;
+    padding: 0;
+  }
+  .sunrise-section-heading p {
+    margin-top: 11px;
+    font-size: 13px;
+    max-width: 290px;
+  }
+  .sunrise-section-heading .sunrise-text-link {
+    margin-top: 9px;
+  }
+  .sunrise-tariffs {
+    grid-template-columns: 1fr;
+    gap: 17px;
+  }
+  .sunrise-tariff {
+    padding: 26px;
+  }
+  .sunrise-tariff-icon {
+    width: 44px;
+    height: 44px;
+    margin-bottom: 20px;
+  }
+  .sunrise-tariff h3 {
+    font-size: 24px;
+  }
+  .sunrise-steps {
+    grid-template-columns: 1fr;
+    gap: 25px;
+  }
+  .sunrise-steps li {
+    display: grid;
+    grid-template-columns: 43px 1fr;
+    column-gap: 19px;
+  }
+  .sunrise-step-index {
+    width: 43px;
+    height: 43px;
+    grid-row: span 2;
+    font-size: 18px;
+  }
+  .sunrise-steps h3 {
+    margin-top: 0;
+    align-self: center;
+    min-height: 28px;
+  }
+  .sunrise-steps p,
+  .sunrise-step-body {
+    margin-top: 2px;
+    font-size: 13px;
+  }
+  .sunrise-steps li:not(:last-child)::after {
+    top: 53px;
+    bottom: -15px;
+    left: 21px;
+    height: auto;
+    width: 1px;
+    right: auto;
+  }
+  .sunrise-faq summary {
+    font-size: 14px;
+    min-height: 64px;
+  }
+  .sunrise-faq-answer {
+    font-size: 13px;
+  }
+  .sunrise-outro {
+    padding-block: 37px;
+  }
+  .sunrise-outro > div {
+    align-items: start;
+    flex-direction: column;
+    gap: 25px;
+  }
+  .sunrise-outro p {
+    font-size: 13px;
+  }
+  .sunrise-footer {
+    padding-block: 34px 24px;
+  }
+  .sunrise-footer-top {
+    flex-wrap: wrap;
+    gap: 17px 24px;
+  }
+  .sunrise-footer-top nav {
+    order: 3;
+    width: 100%;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .sunrise-footer-top > span {
+    font-size: 10px;
+    margin-left: auto;
+  }
+  .sunrise-footer .brand {
+    font-size: 23px;
+  }
+  .sunrise-footer-links {
+    margin-top: 13px;
+    gap: 0 22px;
+    font-size: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sunrise-landing *,
+  .sunrise-landing *::before,
+  .sunrise-landing *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Длинное имя экземпляра переносится без скрытия навигации. */
+.sunrise-header {
+  flex-wrap: wrap;
+}
+.sunrise-landing .brand {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.sunrise-header .brand,
+.sunrise-footer .brand {
+  max-width: min(100%, 390px);
+}
+.sunrise-header {
+  padding-block: 24px;
+}
+.sunrise-hero > div {
+  min-width: 0;
+}
+.sunrise-hero h1 {
+  white-space: normal;
+}
+.sunrise-footer-top {
+  flex-wrap: wrap;
+}
+.sunrise-footer-top > span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+html[data-visual-profile="neutral"] .sunrise-hero {
+  min-height: 530px;
+  gap: 20px;
+}
+html[data-visual-profile="neutral"] .sunrise-hero h1 {
+  font-size: clamp(44px, 6vw, 78px);
+}
+html[data-visual-profile="neutral"] .sunrise-hero h1 {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+html[data-visual-profile="neutral"] .sunrise-outro {
+  background: var(--surface);
+  border-color: var(--line);
+}
+/* Цвет текста и фон меняются вместе, сохраняя контраст при загрузке темы. */
+html[data-visual-profile="neutral"] .sunrise-landing .sunrise-cta {
+  transition: border-color var(--sunrise-fast);
+}
+html[data-visual-profile="neutral"] .sunrise-account {
+  border-color: var(--control-border);
+}
+html[data-visual-profile="neutral"] .sunrise-tariff.is-highlighted {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+@media (max-width: 768px) {
+  .sunrise-header .brand {
+    max-width: 100%;
+  }
+  html[data-visual-profile="neutral"] .sunrise-hero {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}

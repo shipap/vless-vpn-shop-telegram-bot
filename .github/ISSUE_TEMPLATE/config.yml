@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Приватный отчёт об уязвимости / Private security report
+    url: https://github.com/shipap/vless-vpn-shop-telegram-bot/security/advisories/new
+    about: Не публикуйте уязвимости и секреты в открытых Issues.

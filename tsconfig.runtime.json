@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "apps/web",
+    "packages/web-ui",
+    "packages/api-client",
+    "infra/vite.static.config.ts",
+    "scripts/render_static_instance.ts"
+  ],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"]
+}

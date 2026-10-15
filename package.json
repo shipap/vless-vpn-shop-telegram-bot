@@ -1,0 +1,44 @@
+{
+  "name": "sunrise-shop",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "author": "shipap",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:dashboard": "vite --config apps/web/dashboard/vite.config.ts",
+    "dev:landing": "vite --config apps/web/landing/vite.config.ts",
+    "build": "tsc --noEmit && vite build --config apps/web/dashboard/vite.config.ts && vite build --config apps/web/landing/vite.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test --config tests/e2e/playwright.config.ts",
+    "generate:api": "openapi-typescript contracts/openapi.json -o packages/api-client/schema.d.ts",
+    "preview:dashboard": "vite preview --config apps/web/dashboard/vite.config.ts",
+    "preview:landing": "vite preview --config apps/web/landing/vite.config.ts",
+    "lint": "prettier --check \"apps/web/**/*.{ts,tsx,css}\" \"packages/web-ui/**/*.{ts,tsx,jsx,css}\" \"packages/api-client/{client,types}.*\" \"tests/e2e/*.ts\" \"{package,tsconfig}.json\" \"vitest.config.ts\""
+  },
+  "dependencies": {
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@hugeicons/core-free-icons": "^4.3.5",
+    "@hugeicons/react": "^1.1.10",
+    "lucide-react": "^1.52.0",
+    "motion": "^14.0.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.4",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "openapi-typescript": "^7.13.0",
+    "prettier": "^3.9.9",
+    "typescript": "5.9.3",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}

@@ -1,0 +1,40 @@
+# BASE_IMAGE задаётся владельцем: проверенный Debian/Python-образ с зависимостями,
+# pip>=26.2.1, setuptools>=83.0.0 и wheel>=0.46.2. Секреты подключаются при запуске.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && command -v ffmpeg \
+    && command -v ffprobe \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Сохраняем layout монорепозитория: PROJECT_ROOT остаётся /app.
+# В build context нужны только эти runtime-файлы; приватные данные не копируются.
+COPY --chmod=0444 pyproject.toml /app/pyproject.toml
+COPY --chmod=0444 LICENSE NOTICE /app/
+COPY --chmod=0444 docs/THIRD_PARTY_NOTICES.md /app/licenses/
+COPY --chmod=0444 apps/api/src/sunrise_api/*.py /app/apps/api/src/sunrise_api/
+COPY --chmod=0444 apps/bot/src/sunrise_bot/*.py /app/apps/bot/src/sunrise_bot/
+COPY --chmod=0444 apps/worker/src/sunrise_worker/*.py /app/apps/worker/src/sunrise_worker/
+COPY --chmod=0444 packages/core/src/sunrise_core/*.py /app/packages/core/src/sunrise_core/
+COPY --chmod=0444 packages/infrastructure/src/sunrise_infrastructure/*.py /app/packages/infrastructure/src/sunrise_infrastructure/
+
+RUN python -m pip install --disable-pip-version-check --no-index --no-cache-dir \
+        --no-deps --no-build-isolation -e /app \
+    && find /app/apps /app/packages -type d -exec chmod 0555 {} + \
+    && groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /app --shell /usr/sbin/nologin app \
+    && install -d -o root -g app -m 0750 \
+        /app/.private /app/.private/production /app/.private/runtime /app/.private/broadcast-media
+
+# Код root-owned; writable stores и read-only production-конфиг монтирует владелец.
+# Команды бота и worker задаются отдельно. Startup DDL отсутствует.
+USER 10001:10001
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "sunrise_api.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
