@@ -11,6 +11,17 @@ A self-hosted VLESS VPN shop with a Telegram bot, landing page and customer dash
 
 [Installation](docs/INSTALL_EN.md) · [Features (RU)](docs/FEATURES.md) · [Architecture (RU)](docs/ARCHITECTURE.md) · [Security](SECURITY.md)
 
+## Connect payment providers
+
+| Provider | Merchant onboarding |
+| --- | --- |
+| <img src="docs/assets/payment-providers/rollypay-logo.svg" width="56" height="56" alt="RollyPay logo"><br>RollyPay | [Contact Victoria rollypay](https://t.me/Victoria_rollypay?text=Здравствуйте%2C%20хочу%20подключить%20вашу%20платежку%2C%20рекомендация%20%40o3amfeels) |
+| <img src="docs/assets/payment-providers/platega-logo.svg" width="56" height="56" alt="Platega logo"><br>Platega.io | [Contact Alexander Platega](https://t.me/AlexanderPlatega?text=Здравствуйте%2C%20хочу%20подключить%20вашу%20платежку%2C%20рекомендация%20%40o3amfeels) |
+
+Free integration of the Platega API may be available when you connect Platega. For integration inquiries, contact [@o3amfeels](https://t.me/o3amfeels).
+
+The links open merchant onboarding contacts with a referral from @o3amfeels. The payment provider decides whether to approve the application; approval is not guaranteed. The referral does not imply official endorsement of this project by the providers. Report vulnerabilities through the [security channel](SECURITY.md).
+
 ## Features
 
 - Email code login, Telegram login and Telegram Mini App authentication; verified account linking.
@@ -82,9 +93,3 @@ Author: **shipap**. Own code: [AGPL-3.0-only](LICENSE). Third-party terms remain
 VLESS VPN Shop author: shipap. For development, customization, integrations, commercial projects and collaboration:
 
 [work@bububi.icu](mailto:work@bububi.icu) · [Telegram: @o3amfeels](https://t.me/o3amfeels) · [GitHub: shipap](https://github.com/shipap)
-
-##  Connect RollyPay
-
-[![Connect RollyPay](https://img.shields.io/badge/Connect%20RollyPay-F0A45D?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/Victoria_rollypay?text=Здравствуйте%2C%20хочу%20подключить%20вашу%20платежку%2C%20рекомендация%20%40o3amfeels)
-
-The button opens an external merchant onboarding contact for RollyPay with a referral from @o3amfeels. The payment provider decides whether to approve the application; approval is not guaranteed. The referral does not imply official endorsement of this project by RollyPay. Report vulnerabilities through the [security channel](SECURITY.md).

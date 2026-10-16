@@ -1783,6 +1783,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/operations/deliveries/{delivery_id}/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Notification Delivery Review */
+        post: operations["notification_delivery_review_api_v1_admin_operations_deliveries__delivery_id__acknowledge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/operations/maintenance": {
         parameters: {
             query?: never;
@@ -3060,6 +3077,18 @@ export interface components {
             name: string;
             /** Visible */
             visible: boolean;
+        };
+        /** NotificationDeliveryReviewRequest */
+        NotificationDeliveryReviewRequest: {
+            /**
+             * Reason
+             * @default Подтверждённое действие через интерфейс
+             */
+            reason: string;
+            /** Confirmed */
+            confirmed: boolean;
+            /** Ack Token */
+            ack_token: string;
         };
         /** OrderDto */
         OrderDto: {
@@ -6146,6 +6175,7 @@ export interface operations {
         parameters: {
             query?: {
                 refresh_panel?: boolean;
+                refresh_subscription_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -7452,6 +7482,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ProviderOperationReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    notification_delivery_review_api_v1_admin_operations_deliveries__delivery_id__acknowledge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                delivery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationDeliveryReviewRequest"];
             };
         };
         responses: {

@@ -34,6 +34,11 @@ PUBLIC_METADATA = (
     ".github/ISSUE_TEMPLATE/bug_report.yml", ".github/ISSUE_TEMPLATE/feature_request.yml",
     ".github/ISSUE_TEMPLATE/config.yml", "docs/assets/social-preview.png",
 )
+PAYMENT_PROVIDER_ASSETS = (
+    "docs/assets/payment-providers/rollypay-logo.svg",
+    "docs/assets/payment-providers/platega-logo.svg",
+    "docs/assets/payment-providers/PROVENANCE.md",
+)
 ENTRYPOINTS = (
     "apps/api/src/sunrise_api/main.py", "apps/bot/src/sunrise_bot/runtime.py",
     "apps/worker/src/sunrise_worker/main.py", "apps/web/dashboard/index.html",
@@ -110,7 +115,7 @@ def source_path(relative):
 
 def select_files(root):
     root = Path(root).resolve()
-    required = ROOT_FILES + DOCS + EXAMPLES + SKILLS + ENTRYPOINTS + PUBLIC_METADATA
+    required = ROOT_FILES + DOCS + EXAMPLES + SKILLS + ENTRYPOINTS + PUBLIC_METADATA + PAYMENT_PROVIDER_ASSETS
     selected = set()
     for name in required:
         if not (root/name).exists():

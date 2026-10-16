@@ -367,6 +367,51 @@ export function Customer({
   const data =
     dashboard.data?.account.id === session.account.id ? dashboard.data : null;
   const subscriptions = data?.subscriptions || [];
+  const [opening, setOpening] = useState(false);
+  const openingRequest = useRef<AbortController | null>(null);
+  useEffect(() => {
+    setOpening(false);
+    return () => {
+      openingRequest.current?.abort();
+      openingRequest.current = null;
+    };
+  }, [session.account.id, page, selected]);
+  async function openCheckout(action: Action, target: Subscription) {
+    if (openingRequest.current) return;
+    const controller = new AbortController();
+    openingRequest.current = controller;
+    setOpening(true);
+    setCheckout(null);
+    setError(null);
+    try {
+      const fresh = await api<Dashboard>(
+        `/dashboard?refresh_panel=true&refresh_subscription_id=${encodeURIComponent(target.id)}`,
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted) return;
+      const current = fresh.subscriptions.find((item) => item.id === target.id);
+      if (
+        fresh.account.id !== session.account.id ||
+        !current ||
+        retentionBlocked(current)
+      )
+        throw new Error("Подписка недоступна для выбранного действия.");
+      dashboard.setData(fresh);
+      if (current.renewal_pricing_state === "blocked") {
+        throw new Error(
+          "Не удалось проверить данные панели. Повторите действие после обновления подписки.",
+        );
+      }
+      setCheckout({ action, subscription: current });
+    } catch (failure) {
+      if (!controller.signal.aborted) setError(failure);
+    } finally {
+      if (openingRequest.current === controller) {
+        openingRequest.current = null;
+        setOpening(false);
+      }
+    }
+  }
   useEffect(() => {
     if (!notificationAction || !validNotificationAction(notificationAction))
       return;
@@ -510,6 +555,7 @@ export function Customer({
         )}
       </SectionTitle>
       {Boolean(error) && !confirmation && <ErrorState error={error} />}
+      {opening && <p role="status">Проверяем данные подписки…</p>}
       {page === "news" && (
         <NodeNews hasSubscription={subscriptions.length > 0} />
       )}
@@ -711,9 +757,8 @@ export function Customer({
               {!targetHeld && (
                 <div className="quick-actions">
                   <button
-                    onClick={() =>
-                      setCheckout({ action: "renew", subscription })
-                    }
+                    disabled={opening}
+                    onClick={() => openCheckout("renew", subscription)}
                   >
                     <RefreshCw />
                     <span>
@@ -730,13 +775,10 @@ export function Customer({
                   {tierActions.map((action) => (
                     <button
                       key={action}
-                      disabled={!tierProducts.length}
+                      disabled={opening || !tierProducts.length}
                       onClick={() => {
                         if (!tierProducts.length) return;
-                        setCheckout({
-                          action,
-                          subscription,
-                        });
+                        return openCheckout(action, subscription);
                       }}
                     >
                       <Wifi />
@@ -863,7 +905,8 @@ export function Customer({
                 key={subscription.id}
                 subscription={subscription}
                 blocked={Boolean(data.account.unlink_blocked)}
-                onAdd={() => setCheckout({ action: "devices", subscription })}
+                adding={opening}
+                onAdd={() => openCheckout("devices", subscription)}
                 onConnect={() => setConnect(subscription)}
                 onRefresh={dashboard.reload}
                 onRotate={() => {

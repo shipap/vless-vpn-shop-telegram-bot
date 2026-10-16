@@ -1300,6 +1300,7 @@ class Commerce:
                     )
             unadjusted_products = {}
             fixed_promo_products = {}
+            basis["device_price_factor"] = str(device_factor)
             for item in s.scalars(select(Product).where(Product.currency == p.currency)):
                 basis["device_terms"][item.id] = product_device_terms(item)
                 try:
@@ -1330,8 +1331,8 @@ class Commerce:
             if action in {"upgrade", "downgrade", "devices"}:
                 if not sub or not sub.expires_at or sub.expires_at <= moment:
                     raise DomainError("no_paid_segment", "Нет действующего оплаченного периода.")
-                segments = panel_entitlements.remaining_segments(s, sub, moment)
-                active = panel_entitlements.current_segment(s, sub, moment)
+                segments = panel_entitlements.valuation_segments(s, sub, moment)
+                active = next((item for item in reversed(segments) if item.starts_at <= moment), None)
                 if not active or active.kind != "paid":
                     raise DomainError(
                         "valuation_unknown", "Стоимость оставшегося периода требует проверки владельцем."
@@ -1448,6 +1449,10 @@ class Commerce:
                         key: str(money(D(value) * discounted / previous_discounted))
                         for key, value in basis["products"].items()
                     }
+                    if basis.get("device_price_factor") is not None:
+                        basis["device_price_factor"] = str(
+                            D(basis["device_price_factor"]) * discounted / previous_discounted
+                        )
             forced_minimum = False
             minimum = None
             if p.currency == "RUB" and action in {"purchase", "renew"}:
@@ -1462,6 +1467,7 @@ class Commerce:
                         key: str(money(value * price.discounted / price.base))
                         for key, value in unadjusted_products.items()
                     }
+                    basis["device_price_factor"] = str(price.discounted / price.base)
             if fixed_promo_products and action in {"purchase", "renew"}:
                 # Freeze each alternative tariff with the same absolute reward.
                 # A percentage inferred from the purchased tariff would invent
@@ -1471,6 +1477,8 @@ class Commerce:
                     key: str(money(max(minimum or D(0), money(value * method_factor))))
                     for key, value in fixed_promo_products.items()
                 }
+                # Per-tier minimum floors make the marginal historical device rate ambiguous.
+                basis["device_price_factor"] = None
             requested_credit = D(credit_amount)
             if not requested_credit.is_finite() or requested_credit < 0:
                 raise DomainError("credit_invalid", "Некорректная сумма денежного остатка.", 400)
@@ -2124,6 +2132,7 @@ class Commerce:
                         target.paid_value += D(adjustment["charge"])
                         paid_increment -= D(adjustment["charge"])
             segment.paid_value += paid_increment
+            panel_entitlements.accept_valuation(s, sub, v["basis"])
             sub.product_id = v["product_id"]
         sub.expires_at = end
         if start <= now():

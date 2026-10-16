@@ -2,15 +2,16 @@
 
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from sqlalchemy import String, and_, cast, func, or_, select, text
+from sqlalchemy import BigInteger, String, and_, cast, func, or_, select, text
 
 from .db import (
     Account,
     Inbox,
     Job,
+    Notification,
     NotificationDelivery,
     Order,
     Payment,
@@ -79,6 +80,65 @@ def provider_reviewed_clause():
     )
 
 
+def _review_timestamp(value):
+    if value is None:
+        return ""
+    elapsed = value - datetime(1970, 1, 1, tzinfo=UTC)
+    return str((elapsed.days * 86400 + elapsed.seconds) * 1000000 + elapsed.microseconds)
+
+
+def delivery_review_binding(delivery, notification):
+    return {
+        "delivery_id": delivery.id,
+        "notification_id": notification.id,
+        "account_id": str(notification.account_id),
+        "channel": delivery.channel,
+        "recipient_hash": hashlib.sha256(delivery.recipient.encode()).hexdigest(),
+        "state": delivery.state,
+        "attempts": str(delivery.attempts),
+        "last_error": delivery.last_error or "",
+        "available_at": _review_timestamp(delivery.available_at),
+        "delivered_at": _review_timestamp(delivery.delivered_at),
+    }
+
+
+def delivery_review_token(delivery, notification):
+    return hashlib.sha256(
+        json.dumps(delivery_review_binding(delivery, notification), sort_keys=True).encode()
+    ).hexdigest()
+
+
+def delivery_reviewed_clause():
+    def timestamp(column):
+        return func.coalesce(cast(cast(func.extract("epoch", column) * 1000000, BigInteger), String), "")
+
+    binding = {
+        "delivery_id": NotificationDelivery.id,
+        "notification_id": Notification.id,
+        "account_id": cast(Notification.account_id, String),
+        "channel": NotificationDelivery.channel,
+        "recipient_hash": func.encode(
+            func.sha256(func.convert_to(NotificationDelivery.recipient, "UTF8")), "hex"
+        ),
+        "state": NotificationDelivery.state,
+        "attempts": cast(NotificationDelivery.attempts, String),
+        "last_error": func.coalesce(NotificationDelivery.last_error, ""),
+        "available_at": timestamp(NotificationDelivery.available_at),
+        "delivered_at": timestamp(NotificationDelivery.delivered_at),
+    }
+    return (
+        select(Setting.key)
+        .where(
+            Setting.key == "delivery-review:" + NotificationDelivery.id,
+            Setting.value["version"].as_integer() == 1,
+            NotificationDelivery.state == "review",
+            *(Setting.value["binding"][key].as_string() == value for key, value in binding.items()),
+        )
+        .correlate(NotificationDelivery, Notification)
+        .exists()
+    )
+
+
 def operational_alert_body(snapshot, *, local_test=False):
     counts = snapshot["counts"]
     prefix = "Тестовый стенд.\n\n" if local_test is True else ""
@@ -140,10 +200,15 @@ class OperationalMonitor:
                 ~provider_reviewed_clause(),
             )
         )
-        delivery_query = select(NotificationDelivery).where(
-            or_(
-                NotificationDelivery.state == "review",
-                (NotificationDelivery.state == "pending") & (NotificationDelivery.available_at <= cutoff),
+        delivery_query = (
+            select(NotificationDelivery, Notification)
+            .join(Notification, Notification.id == NotificationDelivery.notification_id)
+            .where(
+                or_(
+                    NotificationDelivery.state == "review",
+                    (NotificationDelivery.state == "pending") & (NotificationDelivery.available_at <= cutoff),
+                ),
+                ~delivery_reviewed_clause(),
             )
         )
         for kind, query in [
@@ -229,11 +294,14 @@ class OperationalMonitor:
                 retry_kind = (
                     "provisioning" if kind == "job" and item.kind == "provision" and order_id else None
                 )
-                can_acknowledge = kind == "provider_operation" and bool(
-                    session.scalar(
-                        select(ProviderOperation.id)
-                        .join(Order, Order.id == ProviderOperation.order_id)
-                        .where(ProviderOperation.id == item.id, provider_acknowledgeable_clause())
+                can_acknowledge = (kind == "delivery" and item.state == "review") or (
+                    kind == "provider_operation"
+                    and bool(
+                        session.scalar(
+                            select(ProviderOperation.id)
+                            .join(Order, Order.id == ProviderOperation.order_id)
+                            .where(ProviderOperation.id == item.id, provider_acknowledgeable_clause())
+                        )
                     )
                 )
                 rows.append(
@@ -246,7 +314,7 @@ class OperationalMonitor:
                         "age_seconds": max(0, int((moment - since).total_seconds())),
                         "reason": (
                             "Результат создания счёта неизвестен. Автоматическая сверка продолжается; повторный счёт не создаётся."
-                            if can_acknowledge
+                            if kind == "provider_operation" and can_acknowledge
                             else "Неизвестен результат платежа: требуется сверка, новое списание запрещено."
                             if kind == "provider_operation"
                             else "Платёжное событие ожидает обработки или проверки."
@@ -263,7 +331,13 @@ class OperationalMonitor:
                         ),
                         "retry_kind": retry_kind,
                         "can_acknowledge": can_acknowledge,
-                        "ack_token": provider_review_token(item, record[1]) if can_acknowledge else None,
+                        "ack_token": (
+                            delivery_review_token(item, record[1])
+                            if kind == "delivery"
+                            else provider_review_token(item, record[1])
+                        )
+                        if can_acknowledge
+                        else None,
                         "target": "/admin#orders" if order_id else "/admin#operations",
                     }
                 )

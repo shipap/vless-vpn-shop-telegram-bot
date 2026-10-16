@@ -11,6 +11,17 @@
 
 [Установка](docs/INSTALL_RU.md) · [Возможности](docs/FEATURES.md) · [Архитектура](docs/ARCHITECTURE.md) · [Безопасность](SECURITY.md)
 
+## Подключение платёжных сервисов
+
+| Сервис | Подключение магазина |
+| --- | --- |
+| <img src="docs/assets/payment-providers/rollypay-logo.svg" width="56" height="56" alt="Логотип RollyPay"><br>RollyPay | [Написать Victoria rollypay](https://t.me/Victoria_rollypay?text=Здравствуйте%2C%20хочу%20подключить%20вашу%20платежку%2C%20рекомендация%20%40o3amfeels) |
+| <img src="docs/assets/payment-providers/platega-logo.svg" width="56" height="56" alt="Логотип Platega"><br>Platega.io | [Написать Alexander Platega](https://t.me/AlexanderPlatega?text=Здравствуйте%2C%20хочу%20подключить%20вашу%20платежку%2C%20рекомендация%20%40o3amfeels) |
+
+При подключении Platega возможна бесплатная интеграция её API. По вопросам интеграции — [@o3amfeels](https://t.me/o3amfeels).
+
+Ссылки открывают контакты подключения с рекомендацией @o3amfeels. Решение принимает платёжный провайдер; одобрение не гарантируется. Рекомендация не означает официального одобрения проекта провайдерами. Об уязвимостях сообщайте через [канал безопасности](SECURITY.md).
+
 ## Что умеет
 
 - Вход по коду из почты, через Telegram и Telegram Mini App; подтверждённая привязка аккаунтов.
@@ -82,9 +93,3 @@ flowchart LR
 Автор VLESS VPN Shop: shipap. По вопросам разработки, доработок, интеграций, коммерческих проектов и сотрудничества:
 
 [work@bububi.icu](mailto:work@bububi.icu) · [Telegram: @o3amfeels](https://t.me/o3amfeels) · [GitHub: shipap](https://github.com/shipap)
-
-##  Подключение RollyPay
-
-[![Подключить RollyPay](https://img.shields.io/badge/Подключить%20RollyPay-F0A45D?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/Victoria_rollypay?text=Здравствуйте%2C%20хочу%20подключить%20вашу%20платежку%2C%20рекомендация%20%40o3amfeels)
-
-Кнопка открывает внешний контакт для подключения магазина к RollyPay с рекомендацией @o3amfeels. Решение о подключении принимает платёжный провайдер; одобрение не гарантируется. Рекомендация не означает официального одобрения проекта со стороны RollyPay. Об уязвимостях сообщайте через [канал безопасности](SECURITY.md).

@@ -191,6 +191,10 @@ class ProviderOperationReviewRequest(Reason):
     confirmed: StrictBool
 
 
+class NotificationDeliveryReviewRequest(ProviderOperationReviewRequest):
+    pass
+
+
 class ToggleRequest(Reason):
     enabled: bool
 

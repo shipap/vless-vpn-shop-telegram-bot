@@ -2159,6 +2159,22 @@
               "default": false,
               "title": "Refresh Panel"
             }
+          },
+          {
+            "name": "refresh_subscription_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Refresh Subscription Id"
+            }
           }
         ],
         "responses": {
@@ -3906,6 +3922,53 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ProviderOperationReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/operations/deliveries/{delivery_id}/acknowledge": {
+      "post": {
+        "summary": "Notification Delivery Review",
+        "operationId": "notification_delivery_review_api_v1_admin_operations_deliveries__delivery_id__acknowledge_post",
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Delivery Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationDeliveryReviewRequest"
               }
             }
           }
@@ -7580,6 +7643,33 @@
           "visible"
         ],
         "title": "NodeVisibility"
+      },
+      "NotificationDeliveryReviewRequest": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 5,
+            "title": "Reason",
+            "default": "Подтверждённое действие через интерфейс"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "title": "Confirmed"
+          },
+          "ack_token": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Ack Token"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "confirmed",
+          "ack_token"
+        ],
+        "title": "NotificationDeliveryReviewRequest"
       },
       "OrderDto": {
         "properties": {

@@ -69,6 +69,7 @@ from .schemas import (
     MfaStatusDto,
     MiniAppRequest,
     NodeNewsDto,
+    NotificationDeliveryReviewRequest,
     OrderDto,
     OrderRequest,
     OrdinaryContentUpdate,
@@ -743,8 +744,12 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/api/v1/dashboard", response_model=DashboardDto)
-    def dashboard(refresh_panel: bool = False, pair=Depends(authenticated)):
-        return commerce.dashboard(pair[0].id, refresh_panel=refresh_panel)
+    def dashboard(
+        refresh_panel: bool = False, refresh_subscription_id: str | None = None, pair=Depends(authenticated)
+    ):
+        return commerce.dashboard(
+            pair[0].id, refresh_panel=refresh_panel, refresh_subscription_id=refresh_subscription_id
+        )
 
     @app.get("/api/v1/node-news", response_model=NodeNewsDto)
     def node_news(
@@ -1013,6 +1018,13 @@ def create_app(
     ):
         confirmation(body)
         return admin.acknowledge_provider_operation(pair[0].id, operation_id, body.ack_token, body.reason)
+
+    @app.post("/api/v1/admin/operations/deliveries/{delivery_id}/acknowledge")
+    def notification_delivery_review(
+        delivery_id: str, body: NotificationDeliveryReviewRequest, pair=Depends(fresh_admin)
+    ):
+        confirmation(body)
+        return admin.acknowledge_notification_delivery(pair[0].id, delivery_id, body.ack_token, body.reason)
 
     @app.patch("/api/v1/admin/operations/maintenance")
     def maintenance(body: ToggleRequest, pair=Depends(fresh_admin)):

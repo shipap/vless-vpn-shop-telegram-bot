@@ -81,25 +81,37 @@ export function OperationalIssues({
                       >
                         Открыть раздел
                       </a>
-                      {canManage && item.can_acknowledge && item.ack_token && (
-                        <Button
-                          className="small"
-                          tone="secondary"
-                          onClick={() =>
-                            mutate({
-                              title: "Отметить операцию как разобранную?",
-                              confirmLabel: "Разобрано",
-                              description:
-                                "Операция исчезнет из очереди и предупреждений. Результат оплаты останется неизвестным, сверка продолжится. Новый счёт создан не будет.",
-                              path: `/admin/operations/provider/${encodeURIComponent(item.reference)}/acknowledge`,
-                              method: "POST",
-                              body: { ack_token: item.ack_token },
-                            })
-                          }
-                        >
-                          Разобрано
-                        </Button>
-                      )}
+                      {canManage &&
+                        item.can_acknowledge &&
+                        item.ack_token &&
+                        (item.kind !== "delivery" ||
+                          item.state === "review") && (
+                          <Button
+                            className="small"
+                            tone="secondary"
+                            onClick={() =>
+                              mutate({
+                                title:
+                                  item.kind === "delivery"
+                                    ? "Отметить проблему доставки как решённую?"
+                                    : "Отметить операцию как разобранную?",
+                                confirmLabel:
+                                  item.kind === "delivery"
+                                    ? "Решено"
+                                    : "Разобрано",
+                                description:
+                                  item.kind === "delivery"
+                                    ? "Текущий сигнал исчезнет из очереди и предупреждений. История и неизвестный результат доставки сохранятся. Повторной отправки не будет; изменившаяся проблема появится снова."
+                                    : "Операция исчезнет из очереди и предупреждений. Результат оплаты останется неизвестным, сверка продолжится. Новый счёт создан не будет.",
+                                path: `/admin/operations/${item.kind === "delivery" ? "deliveries" : "provider"}/${encodeURIComponent(item.reference)}/acknowledge`,
+                                method: "POST",
+                                body: { ack_token: item.ack_token },
+                              })
+                            }
+                          >
+                            {item.kind === "delivery" ? "Решено" : "Разобрано"}
+                          </Button>
+                        )}
                       {canManage &&
                         item.retry_kind === "provisioning" &&
                         item.order_id && (

@@ -44,6 +44,9 @@ def fixture(root):
         "contracts/openapi.json",
         ".github/ISSUE_TEMPLATE/bug_report.yml", ".github/ISSUE_TEMPLATE/feature_request.yml",
         ".github/ISSUE_TEMPLATE/config.yml", "docs/assets/social-preview.png",
+        "docs/assets/payment-providers/rollypay-logo.svg",
+        "docs/assets/payment-providers/platega-logo.svg",
+        "docs/assets/payment-providers/PROVENANCE.md",
     ]
     for name in names:
         path = root/name
@@ -53,6 +56,22 @@ def fixture(root):
 
 
 class PublicPackageTests(unittest.TestCase):
+    def test_only_reviewed_provider_logos_and_their_provenance_are_included(self):
+        module = load_packer()
+        names = {
+            "docs/assets/payment-providers/rollypay-logo.svg",
+            "docs/assets/payment-providers/platega-logo.svg",
+            "docs/assets/payment-providers/PROVENANCE.md",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fixture(root)
+            unreviewed = root/"docs/assets/payment-providers/unreviewed.svg"
+            unreviewed.write_text("not reviewed\n", encoding="utf-8")
+            selected = {p.as_posix() for p in module.select_files(root)}
+            self.assertTrue(names <= selected)
+            self.assertNotIn(unreviewed.relative_to(root).as_posix(), selected)
+
     def test_reviewed_community_files_and_social_preview_are_included(self):
         module = load_packer()
         names = (

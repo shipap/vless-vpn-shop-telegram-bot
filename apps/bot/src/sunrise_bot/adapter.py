@@ -874,6 +874,13 @@ class BotApplication:
             if data.get("intent") == "devices"
             else "periods"
         )
+        operation_entry = (
+            action == "periods"
+            and data.get("intent") == "renew"
+            or action == "products"
+            and data.get("intent") in {"upgrade", "downgrade"}
+            or action == "device_quote"
+        )
         if data.get("sid") and action in {
             "connect",
             "connection_platform",
@@ -898,12 +905,25 @@ class BotApplication:
             "promo_claim_confirm",
             "promo_claim_apply",
         }:
-            sub = subscription_snapshot or await self.subscription(aid, data["sid"])
+            sub = subscription_snapshot or await self.subscription(
+                aid, data["sid"], refresh_panel=operation_entry
+            )
             subscription_snapshot = sub
             if copy.retention_blocked(sub):
                 return await self.execute(
                     uid, aid, "subscription", {"sid": sub["id"]}, mid, token, subscription_snapshot=sub
                 )
+            if operation_entry:
+                if sub.get("renewal_pricing_state") == "blocked":
+                    from sunrise_core.errors import DomainError
+
+                    raise DomainError(
+                        "panel_sync_required",
+                        "Не удалось проверить данные панели. Обновите подписку перед выбранным действием.",
+                        409,
+                    )
+                if data.get("intent") == "renew":
+                    data = {**data, "product_id": sub["product_id"]}
         if action.startswith("admin_promo"):
             self.admin_flow.cancel(uid)
             return await self.admin_promos.execute(uid, aid, action, data, mid)
@@ -1512,7 +1532,11 @@ class BotApplication:
             from sunrise_core.telegram_content import telegram_html_to_content
 
             catalog = await self.call("catalog")
-            current = await self.subscription(aid, data["sid"]) if data.get("sid") else None
+            current = (
+                subscription_snapshot or await self.subscription(aid, data["sid"])
+                if data.get("sid")
+                else None
+            )
             current_product = next(
                 (p for p in catalog["products"] if current and p["id"] == current["product_id"]), {}
             )
@@ -2133,7 +2157,7 @@ class BotApplication:
                 message_id=mid,
             )
         if action == "device_quote":
-            sub = await self.subscription(aid, data["sid"])
+            sub = subscription_snapshot or await self.subscription(aid, data["sid"])
             catalog = await self.call("catalog")
             if not catalog["periods"]:
                 return await self.show(
@@ -2152,6 +2176,7 @@ class BotApplication:
                 },
                 mid,
                 token,
+                subscription_snapshot=sub,
             )
         if action in {"cancel_confirm", "enroll_confirm"}:
             archived = False

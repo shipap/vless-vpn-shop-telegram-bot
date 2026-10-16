@@ -65,6 +65,7 @@ export function CustomerDevices({
   subscription,
   blocked,
   onAdd,
+  adding = false,
   onConnect,
   onRefresh,
   onRotate,
@@ -72,6 +73,7 @@ export function CustomerDevices({
   subscription: Subscription;
   blocked: boolean;
   onAdd: () => void;
+  adding?: boolean;
   onConnect: () => void;
   onRefresh: () => void;
   onRotate: () => void;
@@ -271,7 +273,7 @@ export function CustomerDevices({
             )}
           </p>
         </div>
-        <Button tone="secondary" onClick={onAdd}>
+        <Button tone="secondary" busy={adding} onClick={onAdd}>
           Добавить устройства
         </Button>
       </div>

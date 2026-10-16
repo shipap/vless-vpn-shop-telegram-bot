@@ -277,3 +277,52 @@ def test_first_connection_and_finite_traffic_use_server_projection_and_clear_unk
         assert "81.5%" not in session.calls[-1].text
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "action,intent",
+    [("periods", "renew"), ("products", "upgrade"), ("products", "downgrade"), ("device_quote", "devices")],
+)
+def test_operation_entry_refreshes_selected_subscription_before_choices(action, intent):
+    async def run():
+        app, service, session, reads = tracked_setup()
+        original = service.dashboard
+        sid = service.subscriptions[0]["id"]
+
+        def dashboard(account_id, **kwargs):
+            result = original(account_id, **kwargs)
+            if kwargs.get("refresh_panel"):
+                service.subscriptions[0].update(product_id="universal", devices_limit=9)
+            return result
+
+        service.dashboard = dashboard
+        await app.execute(
+            "101", AID, action, {"sid": sid, "intent": intent, "product_id": "standard"}, None, ""
+        )
+        assert reads == ([(True, sid), (False, None)] if action == "device_quote" else [(True, sid)])
+        if action == "periods":
+            assert "Универсальный" in session.calls[-1].text
+        if intent == "upgrade":
+            assert "Стандартный" not in session.calls[-1].text
+        if action == "device_quote":
+            choices = [item.data for item in app.actions.values() if item.data.get("intent") == "devices"]
+            assert choices and all(value["product_id"] == "universal" for value in choices)
+
+    asyncio.run(run())
+
+
+def test_operation_entry_rejects_failed_panel_refresh_without_stale_choices():
+    from sunrise_core.errors import DomainError
+
+    async def run():
+        app, service, _, reads = tracked_setup()
+        service.subscriptions[0].update(panel_sync_state="stale", renewal_pricing_state="blocked")
+        sid = service.subscriptions[0]["id"]
+        with pytest.raises(DomainError) as failure:
+            await app.execute(
+                "101", AID, "periods", {"sid": sid, "intent": "renew", "product_id": "standard"}, None, ""
+            )
+        assert failure.value.code == "panel_sync_required"
+        assert reads == [(True, sid)]
+
+    asyncio.run(run())

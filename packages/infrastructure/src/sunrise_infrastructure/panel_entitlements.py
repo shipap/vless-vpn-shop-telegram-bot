@@ -1,13 +1,16 @@
 """Verified current access facts are separate from immutable purchased periods."""
 
 import hashlib
+from copy import deepcopy
 from datetime import datetime, timedelta
+from decimal import Decimal
+from types import SimpleNamespace
 from uuid import UUID
 
 from sqlalchemy import select
 from sunrise_core.errors import DomainError
 
-from .db import Alias, Job, Order, PanelObservation, Product, Segment, Setting, now
+from .db import Alias, Job, Order, PanelObservation, Product, Quote, Segment, Setting, now
 from .panel import PanelReview, panel_expiry
 from .panel_v3 import instant
 
@@ -881,29 +884,147 @@ def require_pricing(session, sub):
         )
 
 
-def require_valuation(session, sub):
+def valuation_segments(session, sub, moment=None):
+    """Project verified panel access onto saved paid prices without rewriting history."""
     require_pricing(session, sub)
-    moment = now()
-    if any(
-        item.ends_at > moment and effective_end(session, sub, item) != item.ends_at
-        for item in segments(session, sub)
+    moment = moment or now()
+    remaining = remaining_segments(session, sub, moment)
+    marker = override(session, sub)
+    if not marker:
+        if any(effective_end(session, sub, item) != item.ends_at for item in remaining):
+            raise DomainError("valuation_unknown", "Не найдена проверенная стоимость остатка периода.", 409)
+        return remaining
+    source = session.get(Segment, marker.get("segment_id")) if marker.get("segment_id") else None
+    if not source or source.subscription_id != sub.id or source.kind != "paid" or source.starts_at > moment:
+        raise DomainError("valuation_unknown", "Не найдены подтверждённые оплаченные условия.", 409)
+    basis = deepcopy(source.price_basis)
+    if (
+        not isinstance(basis, dict)
+        or not isinstance(basis.get("products"), dict)
+        or not basis.get("currency")
+        or type(basis.get("period_days")) is not int
+        or basis["period_days"] <= 0
     ):
+        raise DomainError("valuation_unknown", "Не найдены сопоставимые оплаченные условия.", 409)
+    expiry = instant(marker["expires_at"])
+    if expiry <= moment:
+        raise DomainError("no_paid_segment", "Нет действующего оплаченного периода.", 409)
+    future = [item for item in remaining if item.starts_at > moment and item.id != source.id]
+    if future and expiry > future[0].starts_at:
+        # Do not value the same time twice or silently shorten separately purchased access.
         raise DomainError(
             "valuation_unknown",
-            "Ручное изменение срока панели пересекается с историей оплаченных периодов. Остаточная стоимость требует проверки владельцем.",
+            "Изменение панели пересекает будущий оплаченный период. Нужна проверка владельцем.",
             409,
         )
-    marker = override(session, sub)
-    if marker:
-        active = current_segment(session, sub)
-        if (
-            not active
-            or instant(marker["expires_at"]) != active.ends_at
-            or marker["devices_limit"] != active.devices
-            or marker.get("panel_product_id") != active.product_id
-        ):
+    original = deepcopy(basis)
+    if marker["devices_limit"] != source.devices:
+        from sunrise_core.devices import device_surcharge
+
+        try:
+            if basis.get("device_adjustments"):
+                # Fixed remaining-term supplements have distinct time-normalized rates;
+                # a monthly device delta cannot recover their original per-slot value.
+                raise ValueError()
+            months = Decimal(str(basis["months"]))
+            factor = basis.get("device_price_factor")
+            if factor is None:
+                # Historical tier changes retain the purchase order_id but may have
+                # rescaled this basis. Its original invoice cannot prove the new rate.
+                if basis.get("segment_id") is not None:
+                    raise ValueError()
+                order = session.get(Order, source.order_id) if source.order_id else None
+                quote = session.get(Quote, order.quote_id) if order else None
+                paid = quote.snapshot if quote else {}
+                if (
+                    paid.get("action") not in {"purchase", "renew"}
+                    or paid.get("legacy_promo_grant")
+                    or paid.get("minimum_external_required")
+                    or (paid.get("selected_secondary") or {}).get("reward_type") == "fixed_rub"
+                ):
+                    raise ValueError()
+                # Ordinary period/loyalty discounts exclude devices. A payment-method
+                # discount rescales their saved full-period basis.
+                amount = Decimal(paid["base_amount"]) - Decimal(paid["discount_amount"])
+                before_method = amount + Decimal(paid.get("payment_method_discount_amount", "0"))
+                factor = amount / before_method
+            factor = Decimal(str(factor))
+            if not months.is_finite() or months <= 0 or not factor.is_finite() or not 0 < factor <= 1:
+                raise ValueError()
+        except (ValueError, TypeError, KeyError, ArithmeticError):
             raise DomainError(
-                "valuation_unknown",
-                "Срок или лимит изменён в панели. Стоимость оставшегося оплаченного периода требует проверки владельцем.",
-                409,
-            )
+                "valuation_unknown", "Не найдены точные оплаченные условия устройств.", 409
+            ) from None
+        basis["device_price_factor"] = str(factor)
+        prices = {}
+        for product_id, value in basis["products"].items():
+            terms = basis.get("device_terms", {}).get(product_id)
+            try:
+                if not terms or type(terms.get("included")) is not int:
+                    raise ValueError()
+                if source.devices > terms["included"] and not basis.get("device_pricing_included"):
+                    raise ValueError()
+                previous = device_surcharge(
+                    max(0, source.devices - terms["included"]), terms.get("rules"), terms.get("price")
+                )
+                current = device_surcharge(
+                    max(0, marker["devices_limit"] - terms["included"]),
+                    terms.get("rules"),
+                    terms.get("price"),
+                )
+                amount = Decimal(value) + (current - previous) * months * factor
+                if amount.is_finite() and amount > 0:
+                    prices[product_id] = str(amount)
+            except (ValueError, TypeError, KeyError, ArithmeticError):
+                continue
+        basis["products"] = prices
+        basis["device_pricing_included"] = True
+    if marker.get("panel_product_id") not in basis["products"]:
+        raise DomainError("valuation_unknown", "Не найдена оплаченная ценовая база текущего тарифа.", 409)
+    basis["panel_revaluation"] = {
+        "source_segment_id": source.id,
+        "source_order_id": source.order_id,
+        "source_ends_at": source.ends_at.isoformat(),
+        "source_devices": source.devices,
+        "source_product_id": source.product_id,
+        "source_basis": {key: value for key, value in original.items() if key != "panel_revaluation"},
+        "expires_at": expiry.isoformat(),
+        "devices_limit": marker["devices_limit"],
+        "product_id": marker["panel_product_id"],
+        "subscription_version": sub.version,
+    }
+    return [
+        SimpleNamespace(
+            id=source.id,
+            order_id=source.order_id,
+            kind=source.kind,
+            starts_at=source.starts_at,
+            ends_at=expiry,
+            devices=marker["devices_limit"],
+            product_id=marker["panel_product_id"],
+            price_basis=basis,
+        ),
+        *future,
+    ]
+
+
+def require_valuation(session, sub):
+    if bound(sub):
+        valuation_segments(session, sub)
+
+
+def accept_valuation(session, sub, basis):
+    """A newly accepted paid change supersedes only its reviewed manual access projection."""
+    if not basis.get("panel_revaluation"):
+        return
+    marker = session.get(Setting, override_key(sub.id))
+    if marker:
+        session.delete(marker)
+    window = session.get(Setting, window_key(sub.id))
+    if window:
+        entries = dict(window.value.get("segments", {}))
+        entries.pop(basis["segment_id"], None)
+        if entries:
+            window.value = window.value | {"segments": entries}
+        else:
+            session.delete(window)

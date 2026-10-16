@@ -26,6 +26,8 @@ from .db import (
     Device,
     Job,
     Ledger,
+    Notification,
+    NotificationDelivery,
     Order,
     Payment,
     Product,
@@ -1116,6 +1118,54 @@ class Admin:
             self.audit(session, actor, "provider_operation_reviewed", operation_id, reason, previous, value)
             return result
 
+    def acknowledge_notification_delivery(self, actor, delivery_id, token, reason):
+        from .operational_monitor import delivery_review_binding, delivery_review_token
+        from .staff_permissions import StaffPermissions
+
+        with self.db.transaction() as session:
+            StaffPermissions(self.accounts).require_in(session, actor, "operations_manage", bot=True)
+            candidate = session.execute(
+                select(Notification.id, Notification.account_id)
+                .join(NotificationDelivery, NotificationDelivery.notification_id == Notification.id)
+                .where(NotificationDelivery.id == delivery_id)
+            ).first()
+            if not candidate:
+                raise missing()
+            session.get(Account, candidate.account_id, with_for_update=True)
+            notification = session.get(Notification, candidate.id, with_for_update=True)
+            delivery = session.get(NotificationDelivery, delivery_id, with_for_update=True)
+            if (
+                not notification
+                or not delivery
+                or notification.account_id != candidate.account_id
+                or delivery.notification_id != notification.id
+                or delivery.state != "review"
+                or token != delivery_review_token(delivery, notification)
+            ):
+                raise DomainError(
+                    "operation_review_stale",
+                    "Доставка изменилась. Обновите очередь и проверьте её заново.",
+                    409,
+                )
+            binding = delivery_review_binding(delivery, notification)
+            marker = session.get(Setting, "delivery-review:" + delivery_id)
+            result = {"delivery_id": delivery_id, "acknowledged": True, "delivery_state": delivery.state}
+            if marker and marker.value.get("version") == 1 and marker.value.get("binding") == binding:
+                return result
+            value = {
+                "version": 1,
+                "binding": binding,
+                "actor_id": str(actor),
+                "reviewed_at": now().isoformat(),
+            }
+            previous = marker.value if marker else None
+            if marker:
+                marker.value = value
+            else:
+                session.add(Setting(key="delivery-review:" + delivery_id, value=value))
+            self.audit(session, actor, "notification_delivery_reviewed", delivery_id, reason, previous, value)
+            return result
+
     def health(self):
         from .operational_monitor import OperationalMonitor
 
@@ -1179,6 +1229,7 @@ class Admin:
                 "retry_provisioning": "operations_manage",
                 "job_retry": "operations_manage",
                 "provider_operation_reviewed": "operations_manage",
+                "notification_delivery_reviewed": "operations_manage",
             }.get(action, "settings_write")
             StaffPermissions(self.accounts).require_in(s, actor, capability, bot=True)
             # Website routes enforce fresh TOTP before reaching this shared audit layer.
