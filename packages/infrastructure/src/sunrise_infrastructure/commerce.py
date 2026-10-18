@@ -501,7 +501,20 @@ class Commerce:
             else (panel_entitlements.effective_end(s, sub, active) if active else moment)
         )
         imported = panel_entitlements.imported_baseline(s, sub, moment) if self.live else None
-        if imported:
+        legacy_basis = (paid_basis.get("legacy_catalog") or {}) if self.live else {}
+        legacy_binding = legacy_basis.get("binding") or {}
+        current_binding = panel_entitlements.registered_binding(s, sub) if legacy_basis else None
+        legacy_access = (
+            active is not None and active.kind == "legacy_catalog"
+            and legacy_basis.get("origin") == "legacy_catalog"
+            and legacy_basis.get("subscription_id") == sub.id
+            and legacy_basis.get("environment") == sub.environment
+            and current_binding is not None
+            # Approved credential rotation changes only short_uuid, never the owned identity.
+            and {key: value for key, value in legacy_binding.items() if key != "short_uuid"}
+            == {key: value for key, value in current_binding.items() if key != "short_uuid"}
+        )
+        if imported or legacy_access:
             effective_expiry = max(
                 effective_expiry, panel_entitlements.paid_horizon(s, sub, moment) or effective_expiry
             )
@@ -1333,11 +1346,14 @@ class Commerce:
                     raise DomainError("no_paid_segment", "Нет действующего оплаченного периода.")
                 segments = panel_entitlements.valuation_segments(s, sub, moment)
                 active = next((item for item in reversed(segments) if item.starts_at <= moment), None)
-                if not active or active.kind != "paid":
+                from .legacy_catalog_valuation import supported
+
+                if not active or not supported(active):
                     raise DomainError(
                         "valuation_unknown", "Стоимость оставшегося периода требует проверки владельцем."
                     )
                 basis = dict(active.price_basis) | {"segment_id": active.id}
+                devices = active.devices
                 paid_order = s.get(Order, active.order_id) if active.order_id else None
                 paid_quote = s.get(Quote, paid_order.quote_id) if paid_order else None
                 paid_currency = basis.get("currency") or (
@@ -1444,7 +1460,22 @@ class Commerce:
                 )
                 price = Price(price.base, discounted, recalculated.bonus, recalculated.external)
                 method_discount_amount = max(D(0), previous_discounted - discounted)
-                if previous_discounted:
+                if action == "devices":
+                    # Discount only the new fixed supplement, preserving already purchased value.
+                    _, adjustments = fixed_remaining_terms(
+                        segments, moment, p, extra_devices, accepted_charge=discounted
+                    )
+                    basis = basis | {
+                        key: adjustments[0]["basis"][key]
+                        for key in ("products", "device_pricing_included", "device_adjustments")
+                    } | {"device_segment_adjustments": adjustments}
+                elif action == "upgrade":
+                    if method_discount_amount:
+                        # Preserve the old remainder; only the new tier payment receives this discount.
+                        basis["products"] = basis["products"] | {
+                            p.id: str(old_price + discounted * D(basis["period_days"] * 86400) / D(remaining))
+                        }
+                elif previous_discounted:
                     basis["products"] = {
                         key: str(money(D(value) * discounted / previous_discounted))
                         for key, value in basis["products"].items()
@@ -1777,6 +1808,9 @@ class Commerce:
             p = s.get(Product, q.snapshot["product_id"])
             if p.version != q.snapshot["product_version"] or not p.available:
                 raise DomainError("quote_stale", "Условия изменились. Рассчитайте цену ещё раз.")
+            from .legacy_catalog_valuation import require_current_catalog
+
+            require_current_catalog(s, q.snapshot["basis"])
             if q.subscription_id:
                 sub = self._sub(s, a.id, q.subscription_id, True)
                 self._assert_subscription_operations(s, sub)
@@ -2007,6 +2041,14 @@ class Commerce:
         if sub and sub.version != v["version"]:
             o.status = "reconciliation_required"
             return
+        if sub:
+            from .legacy_catalog_valuation import require_accepted_import
+
+            try:
+                require_accepted_import(s, sub, v["basis"])
+            except DomainError:
+                o.status = "reconciliation_required"
+                return
         if v.get("promo_code"):
             s.scalar(select(Setting).where(Setting.key == "discounts").with_for_update())
             try:
@@ -2097,16 +2139,18 @@ class Commerce:
             if start <= now():
                 sub.product_id = v["product_id"]
         else:
-            segment = s.get(Segment, v["basis"]["segment_id"])
+            from .legacy_catalog_valuation import accepted_basis, materialize
+
+            segment = materialize(s, sub, v["basis"])
             old_end = segment.ends_at
             segment.ends_at = datetime.fromisoformat(
                 v["basis"].get("active_ends_at", v["resulting_expires_at"])
             )
             segment.product_id = v["product_id"]
             segment.devices = v["devices_limit"]
-            segment.price_basis = {
+            segment.price_basis = accepted_basis({
                 k: value for k, value in v["basis"].items() if k != "device_segment_adjustments"
-            } | {
+            }) | {
                 "panel_mappings": v.get("panel_mappings", {}),
                 "panel_configuration": v.get("panel_configuration", {}),
             }
@@ -2117,6 +2161,7 @@ class Commerce:
                         Segment.subscription_id == sub.id,
                         Segment.starts_at >= old_end,
                         Segment.id != segment.id,
+                        Segment.kind != "refunded",
                     )
                 ):
                     future.starts_at += timedelta(seconds=shift)

@@ -7,11 +7,19 @@ from sunrise_core.devices import device_surcharge
 from sunrise_core.errors import DomainError
 from sunrise_core.pricing import money
 
+from .legacy_catalog_valuation import supported
+
 
 def _saved_device_delta(basis, product_id, devices, extra_devices):
     terms = basis.get("device_terms", {}).get(product_id)
     if not terms or type(terms.get("included")) is not int:
         raise ValueError("unknown device terms")
+    if terms.get("rules") == []:
+        # A fixed extra slot is purchased even when the panel has fewer slots than the catalog includes.
+        unit = D(terms["price"])
+        if not unit.is_finite() or unit <= 0:
+            raise ValueError("unknown fixed device value")
+        return unit * extra_devices
     before = max(0, devices - terms["included"])
     after = max(0, devices + extra_devices - terms["included"])
     return device_surcharge(after, terms.get("rules"), terms.get("price")) - device_surcharge(
@@ -19,11 +27,11 @@ def _saved_device_delta(basis, product_id, devices, extra_devices):
     )
 
 
-def fixed_remaining_terms(segments, moment, product, extra_devices):
+def fixed_remaining_terms(segments, moment, product, extra_devices, *, accepted_charge=None):
     price = product.extra_device_price
     if price is None or product.currency != "RUB" or price <= 0:
         raise DomainError("device_price_unknown", "Настройте рублёвую цену дополнительного устройства.", 409)
-    charge = money(price * extra_devices)
+    charge = money(price * extra_devices) if accepted_charge is None else money(accepted_charge)
     durations = [
         max(D(0), D(str((seg.ends_at - max(moment, seg.starts_at)).total_seconds()))) for seg in segments
     ]
@@ -34,7 +42,7 @@ def fixed_remaining_terms(segments, moment, product, extra_devices):
     for index, (segment, duration) in enumerate(zip(segments, durations, strict=True)):
         old = {k: v for k, v in segment.price_basis.items() if k != "device_segment_adjustments"}
         if (
-            segment.kind != "paid"
+            not supported(segment)
             or old.get("currency") != product.currency
             or not old.get("products")
             or not old.get("period_days")

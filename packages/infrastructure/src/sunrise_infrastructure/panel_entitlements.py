@@ -890,12 +890,17 @@ def valuation_segments(session, sub, moment=None):
     moment = moment or now()
     remaining = remaining_segments(session, sub, moment)
     marker = override(session, sub)
+    from .legacy_catalog_valuation import catalog_projection, supported
+
+    legacy = catalog_projection(session, sub, moment)
+    if legacy:
+        return [legacy, *remaining]
     if not marker:
         if any(effective_end(session, sub, item) != item.ends_at for item in remaining):
             raise DomainError("valuation_unknown", "Не найдена проверенная стоимость остатка периода.", 409)
         return remaining
     source = session.get(Segment, marker.get("segment_id")) if marker.get("segment_id") else None
-    if not source or source.subscription_id != sub.id or source.kind != "paid" or source.starts_at > moment:
+    if not source or source.subscription_id != sub.id or not supported(source) or source.starts_at > moment:
         raise DomainError("valuation_unknown", "Не найдены подтверждённые оплаченные условия.", 409)
     basis = deepcopy(source.price_basis)
     if (
@@ -972,7 +977,10 @@ def valuation_segments(session, sub, moment=None):
                     terms.get("rules"),
                     terms.get("price"),
                 )
-                amount = Decimal(value) + (current - previous) * months * factor
+                period_factor = Decimal(basis.get("device_period_factors", {}).get(product_id, "1"))
+                if not period_factor.is_finite() or period_factor <= 0:
+                    raise ValueError()
+                amount = Decimal(value) + (current - previous) * months * factor * period_factor
                 if amount.is_finite() and amount > 0:
                     prices[product_id] = str(amount)
             except (ValueError, TypeError, KeyError, ArithmeticError):
@@ -1015,7 +1023,7 @@ def require_valuation(session, sub):
 
 def accept_valuation(session, sub, basis):
     """A newly accepted paid change supersedes only its reviewed manual access projection."""
-    if not basis.get("panel_revaluation"):
+    if not basis.get("panel_revaluation") and not basis.get("legacy_catalog"):
         return
     marker = session.get(Setting, override_key(sub.id))
     if marker:
