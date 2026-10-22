@@ -742,6 +742,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/subscriptions/{sid}/credentials/rotation/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Rotation */
+        post: operations["cancel_rotation_api_v1_subscriptions__sid__credentials_rotation_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users/{account_id}/message": {
         parameters: {
             query?: never;
@@ -2529,6 +2546,20 @@ export interface components {
              */
             revoke_only_passwords: boolean;
         };
+        /** CredentialRotationCancel */
+        CredentialRotationCancel: {
+            /**
+             * Reason
+             * @default Подтверждена отмена не начатого обновления ссылки
+             */
+            reason: string;
+            /** Confirmed */
+            confirmed: boolean;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Job Id */
+            job_id: string;
+        };
         /** CreditAdjustment */
         CreditAdjustment: {
             /**
@@ -4116,6 +4147,13 @@ export interface components {
             device_inventory_state: "unknown" | "fresh" | "stale" | "unavailable";
             /** Credential Rotation State */
             credential_rotation_state?: string | null;
+            /** Credential Rotation Job Id */
+            credential_rotation_job_id?: string | null;
+            /**
+             * Credential Rotation Cancelable
+             * @default false
+             */
+            credential_rotation_cancelable: boolean;
             /** Paid Horizon */
             paid_horizon?: string | null;
             /**
@@ -4134,6 +4172,13 @@ export interface components {
              * @enum {string}
              */
             renewal_pricing_state: "ready" | "blocked";
+            /** Renewal Pricing Error */
+            renewal_pricing_error?: ("panel_sync_required" | "panel_access_restricted" | "panel_product_unverified" | "panel_capacity_unpriced") | null;
+            /**
+             * Renewal Device Limit Required
+             * @default false
+             */
+            renewal_device_limit_required: boolean;
             /**
              * Panel Product State
              * @default unknown
@@ -5566,6 +5611,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CredentialRotation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_rotation_api_v1_subscriptions__sid__credentials_rotation_cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialRotationCancel"];
             };
         };
         responses: {

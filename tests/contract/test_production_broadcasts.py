@@ -282,7 +282,7 @@ def test_live_broadcast_revalidates_contact_and_actor_without_legal_gate(monkeyp
             else:
                 accepted[0] = False
             return httpx.Response(200, json={"ok": True, "result": {"id": 100001}})
-        return httpx.Response(200, json={"ok": True})
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
 
     client = httpx.Client(transport=httpx.MockTransport(handle))
     monkeypatch.setattr(notifications.httpx, "Client", lambda **kwargs: client)

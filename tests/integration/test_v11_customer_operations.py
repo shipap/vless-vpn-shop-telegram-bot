@@ -12,6 +12,7 @@ from sunrise_infrastructure.accounts import Accounts
 from sunrise_infrastructure.commerce import Commerce
 from sunrise_infrastructure.db import (
     Account,
+    Audit,
     Device,
     DeviceUnlink,
     Job,
@@ -194,6 +195,37 @@ def test_v11_credential_rotation_is_owned_confirmed_idempotent_queue_only(operat
         job = s.get(Job, result["job_id"])
         assert job.payload["revoke_only_passwords"] is False
         assert job.payload["panel_binding"]["user_id"] == "123"
+
+
+def test_blocked_rotation_visible_no_duplicate_and_exact_never_started_cancel(operations):
+    ops, commerce, owned = operations
+    db, _, _, state, aid, sid, _ = owned
+    original = ops.rotate_credentials(aid, sid, "blocked-original", confirmed=True)
+    with db.transaction() as tx:
+        job = tx.get(Job, original["job_id"])
+        job.state, job.last_error = "blocked", "panel_target_denied"
+        expiry = tx.get(Subscription, sid).expires_at
+    calls = len(state["calls"])
+    profile = commerce.dashboard(aid)["subscriptions"][0]
+    assert profile["credential_rotation_state"] == "blocked"
+    assert profile["credential_rotation_job_id"] == original["job_id"]
+    assert profile["credential_rotation_cancelable"] is True
+    assert profile["panel_sync_state"] == "pending"
+    with pytest.raises(DomainError) as blocked:
+        ops.rotate_credentials(aid, sid, "blocked-duplicate", confirmed=True)
+    assert blocked.value.code == "credential_rotation_pending"
+    canceled = ops.cancel_rotation(aid, sid, original["job_id"], "cancel-never-started", confirmed=True)
+    assert canceled["status"] == "rotate_canceled"
+    assert ops.rotate_credentials(aid, sid, "blocked-original", confirmed=True) == canceled
+    assert (
+        ops.cancel_rotation(aid, sid, original["job_id"], "cancel-never-started", confirmed=True) == canceled
+    )
+    assert len(state["calls"]) == calls
+    with db.transaction() as tx:
+        assert tx.get(Subscription, sid).expires_at == expiry
+        assert tx.scalar(select(Audit).where(Audit.action == "credential_rotation_canceled")) is not None
+        assert len(list(tx.scalars(select(Job).where(Job.kind == "credential_rotate")))) == 1
+    assert commerce.dashboard(aid)["subscriptions"][0]["credential_rotation_state"] is None
 
 
 def test_v11_inventory_refresh_checks_owner_before_any_http(operations):

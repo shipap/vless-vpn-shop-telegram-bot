@@ -387,7 +387,7 @@ def test_day7_archive_hides_active_card_and_emits_support_notice(due_retention):
         assert session.get(Subscription, sid) is not None
         assert (
             session.scalar(select(Notification).where(Notification.kind == "subscription_deleted")).body
-            == "Подписка была удалена. Если это ошибка, обратитесь в поддержку"
+            == "Ваша подписка удалена, поскольку после окончания её срока действия прошло 7 дней."
         )
 
 

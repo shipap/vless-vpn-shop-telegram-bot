@@ -1517,6 +1517,53 @@
         }
       }
     },
+    "/api/v1/subscriptions/{sid}/credentials/rotation/cancel": {
+      "post": {
+        "summary": "Cancel Rotation",
+        "operationId": "cancel_rotation_api_v1_subscriptions__sid__credentials_rotation_cancel_post",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialRotationCancel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/users/{account_id}/message": {
       "post": {
         "summary": "Message",
@@ -6030,6 +6077,38 @@
           "idempotency_key"
         ],
         "title": "CredentialRotation"
+      },
+      "CredentialRotationCancel": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": "Подтверждена отмена не начатого обновления ссылки"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "title": "Confirmed"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+            "title": "Idempotency Key"
+          },
+          "job_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Job Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "confirmed",
+          "idempotency_key",
+          "job_id"
+        ],
+        "title": "CredentialRotationCancel"
       },
       "CreditAdjustment": {
         "properties": {
@@ -10862,6 +10941,22 @@
             ],
             "title": "Credential Rotation State"
           },
+          "credential_rotation_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Rotation Job Id"
+          },
+          "credential_rotation_cancelable": {
+            "type": "boolean",
+            "title": "Credential Rotation Cancelable",
+            "default": false
+          },
           "paid_horizon": {
             "anyOf": [
               {
@@ -10915,6 +11010,28 @@
             ],
             "title": "Renewal Pricing State",
             "default": "blocked"
+          },
+          "renewal_pricing_error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "panel_sync_required",
+                  "panel_access_restricted",
+                  "panel_product_unverified",
+                  "panel_capacity_unpriced"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Renewal Pricing Error"
+          },
+          "renewal_device_limit_required": {
+            "type": "boolean",
+            "title": "Renewal Device Limit Required",
+            "default": false
           },
           "panel_product_state": {
             "type": "string",

@@ -580,3 +580,8 @@ def test_pg_concurrent_dispatchers_create_exactly_one_owner_intent(pg_archived, 
             )
         )
         assert [(row.channel, row.recipient) for row in deliveries] == [("telegram", "930000000001")]
+
+
+def test_expiry_archive_emits_explicit_seven_day_customer_notice(archived):
+    notice = next(row for row in rows(archived, Notification) if row.account_id == 301)
+    assert notice.body == "Ваша подписка удалена, поскольку после окончания её срока действия прошло 7 дней."

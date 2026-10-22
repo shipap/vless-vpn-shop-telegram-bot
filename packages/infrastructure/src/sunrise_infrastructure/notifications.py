@@ -27,9 +27,81 @@ from .db import (
     Setting,
     Subscription,
     now,
+    uid,
 )
 
 SUPPRESSED_NOTIFICATION_KINDS = frozenset({"checkout_ready", "access_ready"})
+TELEGRAM_RECIPIENT_BLOCKS = frozenset({"telegram_recipient_blocked", "telegram_recipient_deactivated"})
+
+
+def _telegram_result(response):
+    """Отрицательный ответ допускает повтор; неизвестный исход требует проверки."""
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return "telegram_delivery_unknown"
+    if response.status_code == 200 and data.get("ok") is True:
+        result = data.get("result")
+        if isinstance(result, dict) and type(result.get("message_id")) is int:
+            return None
+        return "telegram_delivery_unknown"
+    status = response.status_code
+    if data.get("ok") is not False or type(data.get("error_code")) is not int or data["error_code"] != status:
+        return "telegram_delivery_unknown"
+    description = data.get("description")
+    description = description.casefold() if isinstance(description, str) else ""
+    if status == 403:
+        return {
+            "forbidden: bot was blocked by the user": "telegram_recipient_blocked",
+            "forbidden: user is deactivated": "telegram_recipient_deactivated",
+        }.get(description, "telegram_forbidden")
+    if status == 400:
+        if description == "bad request: chat not found":
+            return "telegram_chat_not_found"
+        if description.startswith(
+            ("bad request: can't parse entities", "bad request: can't find end of the entity")
+        ):
+            return "telegram_format_rejected"
+        return "telegram_rejected"
+    if status == 401:
+        return "telegram_auth_failed"
+    if status == 404:
+        return "telegram_endpoint_invalid"
+    if status == 429:
+        parameters = data.get("parameters")
+        seconds = parameters.get("retry_after") if isinstance(parameters, dict) else None
+        if type(seconds) is int and 1 <= seconds <= 3600:
+            raise _TelegramRetryAfter(seconds)
+    if 500 <= status <= 599:
+        raise _TelegramRetryAfter(60, code="telegram_temporary_failure")
+    return "telegram_delivery_unknown"
+
+
+def _telegram_plain(body):
+    """Сохраняет текст и адреса ссылок при отказе HTML-разметки."""
+
+    class Plain(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.parts, self.links = [], []
+
+        def handle_data(self, data):
+            self.parts.append(data)
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "a":
+                self.links.append(dict(attrs).get("href", ""))
+
+        def handle_endtag(self, tag):
+            if tag == "a" and self.links:
+                self.parts.append(" (" + self.links.pop() + ")")
+
+    parser = Plain()
+    parser.feed(body)
+    parser.close()
+    return "".join(parser.parts)
 
 
 def validate_telegram_content(title, body, nodes=None, *, max_units=4096, title_nodes=None):
@@ -93,6 +165,30 @@ class NotificationService:
             telegram_transport,
             push_transport,
         )
+
+    def resume_telegram(self, account_id, telegram_id):
+        """Только для свежего личного сообщения, проверенного адаптером бота."""
+        from .accounts import require_account_access_in
+        from .db import Alias
+
+        with self.db.transaction() as session:
+            account = session.scalar(select(Account).where(Account.id == int(account_id)).with_for_update())
+            if (
+                not account
+                or account.telegram_id is None
+                or str(account.telegram_id) != str(telegram_id)
+                or session.get(Alias, account.id)
+            ):
+                raise missing()
+            require_account_access_in(session, account, self.runtime_policy)
+            account.telegram_notifications_blocked = False
+            key = "telegram-activity:" + str(account.id)
+            marker = session.get(Setting, key)
+            if marker is None:
+                marker = Setting(key=key)
+                session.add(marker)
+            marker.value = {"generation": uid()}
+        return {"status": "resumed"}
 
     def emit_in(
         self,
@@ -938,6 +1034,9 @@ class NotificationService:
                 delivery.state, delivery.attempts = "in_flight", delivery.attempts + 1
                 delivery.available_at = now() + timedelta(minutes=5)
                 identifier, channel, recipient = delivery.id, delivery.channel, delivery.recipient
+                claimed_account_id = account.id
+                activity = session.get(Setting, "telegram-activity:" + str(account.id))
+                activity_generation = activity.value if activity else None
                 payload = {
                     "title": paid_content[0] if paid_content else item.title,
                     "kind": item.kind,
@@ -966,7 +1065,14 @@ class NotificationService:
             try:
                 self._deliver(channel, recipient, payload, identifier)
             except DomainError as exc:
-                result, error = ("blocked" if exc.code == "telegram_forbidden" else "review"), exc.code
+                result, error = (
+                    (
+                        "cancelled"
+                        if exc.code in TELEGRAM_RECIPIENT_BLOCKS | {"telegram_chat_not_found"}
+                        else "review"
+                    ),
+                    exc.code,
+                )
                 if isinstance(exc, _TelegramRetryAfter):
                     result, retry_after = "pending", exc.seconds
             except Exception:  # noqa: BLE001 -- network outcome must be quarantined without leaking transport credentials
@@ -1000,7 +1106,14 @@ class NotificationService:
                 if result == "delivered":
                     delivery.delivered_at = now()
                     completed += 1
-                if error == "telegram_forbidden" and account and str(account.telegram_id) == recipient:
+                activity = session.get(Setting, "telegram-activity:" + str(account.id)) if account else None
+                if (
+                    error in TELEGRAM_RECIPIENT_BLOCKS
+                    and account
+                    and account.id == claimed_account_id
+                    and str(account.telegram_id) == recipient
+                    and (activity.value if activity else None) == activity_generation
+                ):
                     account.telegram_notifications_blocked = True
         return completed
 
@@ -1325,9 +1438,8 @@ class NotificationService:
                 or item.kind in SUPPRESSED_NOTIFICATION_KINDS
                 or item.kind == "broadcast"
                 and (
-                    channel == "push"
-                    or channel == "email"
-                    and account is not None
+                    delivery.channel == "push"
+                    or delivery.channel == "email"
                     and account.telegram_id is not None
                     and not self._media_self_in(session, item)
                 )
@@ -1375,8 +1487,27 @@ class NotificationService:
             if not token or token.split(":", 1)[0] not in approved:
                 raise DomainError("telegram_unavailable", "Тестовый бот не настроен.", 503)
             with httpx.Client(timeout=10, follow_redirects=False, trust_env=False) as client:
-                identity = client.get("https://api.telegram.org/bot" + token + "/getMe").json()
-                if not identity.get("ok") or str(identity.get("result", {}).get("id")) not in approved:
+                identity_response = client.get("https://api.telegram.org/bot" + token + "/getMe")
+                identity = identity_response.json()
+                if (
+                    isinstance(identity, dict)
+                    and identity.get("ok") is False
+                    and identity.get("error_code") in {401, 404}
+                    and identity.get("error_code") == identity_response.status_code
+                ):
+                    raise DomainError(
+                        "telegram_auth_failed"
+                        if identity["error_code"] == 401
+                        else "telegram_endpoint_invalid",
+                        "Бот не подтверждён.",
+                        503,
+                    )
+                if (
+                    not isinstance(identity, dict)
+                    or identity.get("ok") is not True
+                    or not isinstance(identity.get("result"), dict)
+                    or str(identity["result"].get("id")) not in approved
+                ):
                     raise DomainError("telegram_unavailable", "Тестовый бот не подтверждён.", 503)
                 body = validate_telegram_content(
                     payload["title"],
@@ -1439,32 +1570,46 @@ class NotificationService:
                             ),
                         },
                     )
-                data = response.json()
-                if (
-                    response.status_code == 429
-                    and isinstance(data, dict)
-                    and data.get("ok") is False
-                    and data.get("error_code") == 429
-                ):
-                    parameters = data.get("parameters")
-                    seconds = parameters.get("retry_after") if isinstance(parameters, dict) else None
-                    if isinstance(seconds, int) and not isinstance(seconds, bool) and 1 <= seconds <= 3600:
-                        raise _TelegramRetryAfter(seconds)
-                if not data.get("ok"):
-                    rejected = (
-                        data.get("ok") is False
-                        and response.status_code in {400, 401, 403, 404}
-                        and data.get("error_code") == response.status_code
-                    )
-                    raise DomainError(
-                        "telegram_forbidden"
-                        if rejected and response.status_code == 403
-                        else "telegram_rejected"
-                        if rejected
-                        else "telegram_delivery_unknown",
-                        "Уведомление не доставлено.",
-                        503,
-                    )
+                error = _telegram_result(response)
+                if error == "telegram_format_rejected":
+                    plain = _telegram_plain(body)
+                    if len(plain.encode("utf-16-le")) // 2 <= (1024 if media else 4096):
+                        if validate_authority:
+                            _, media_bytes = self._validate_delivery(channel, recipient, payload, identifier)
+                        if media is not None:
+                            data.pop("parse_mode", None)
+                            data["caption"] = plain
+                            response = client.post(
+                                "https://api.telegram.org/bot" + token + "/send" + field.title(),
+                                data=data,
+                                files={
+                                    field: (
+                                        "broadcast.mp4" if field == "video" else "broadcast.png",
+                                        media_bytes,
+                                        media["mime"],
+                                    )
+                                },
+                            )
+                        else:
+                            fallback = {
+                                "chat_id": recipient,
+                                "text": plain,
+                                "link_preview_options": {"is_disabled": True},
+                            }
+                            if actions or paid_buttons:
+                                fallback["reply_markup"] = {
+                                    "inline_keyboard": paid_buttons
+                                    + [
+                                        [{"text": action["label"], "url": action["url"]}]
+                                        for action in actions
+                                    ]
+                                }
+                            response = client.post(
+                                "https://api.telegram.org/bot" + token + "/sendMessage", json=fallback
+                            )
+                        error = _telegram_result(response)
+                if error:
+                    raise DomainError(error, "Уведомление не доставлено.", 503)
                 return
         if channel == "email":
             transport = self.mail_transport
@@ -1539,8 +1684,8 @@ class NotificationService:
 
 
 class _TelegramRetryAfter(DomainError):
-    def __init__(self, seconds):
-        super().__init__("telegram_rate_limited", "Telegram попросил отложить отправку.", 429)
+    def __init__(self, seconds, *, code="telegram_rate_limited"):
+        super().__init__(code, "Telegram попросил отложить отправку.", 429)
         self.seconds = seconds
 
 

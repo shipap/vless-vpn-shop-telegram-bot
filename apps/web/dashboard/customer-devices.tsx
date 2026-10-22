@@ -356,7 +356,9 @@ export function CustomerDevices({
       )}
       {(pending || rotating) && (
         <p className="notice" role="status">
-          {subscription.credential_rotation_state === "review"
+          {["review", "blocked"].includes(
+            subscription.credential_rotation_state || "",
+          )
             ? "Перевыпуск ссылки требует сверки. Новое подключение появится после подтверждения панели."
             : pending?.review
               ? "Отвязка требует сверки. Повторная отправка недоступна до подтверждения результата."

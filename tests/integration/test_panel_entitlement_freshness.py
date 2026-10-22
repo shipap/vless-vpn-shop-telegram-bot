@@ -69,6 +69,60 @@ def renewal(context):
     return context[2].quote(301, context[6], 30, "renew", context[5])
 
 
+def test_own_list_and_selected_checkout_refresh_only_owned_subscription(entitlement):
+    from sunrise_infrastructure.db import Account
+
+    db, _, commerce, _, state, sid, product_id, _, _ = entitlement
+    with db.transaction() as tx:
+        other = Account(email="foreign-owned@synthetic.test", email_verified=True)
+        tx.add(other)
+        tx.flush()
+        tx.add(
+            Subscription(
+                id="foreign-owned",
+                account_id=other.id,
+                product_id=product_id,
+                panel_uuid="33333333-3333-4333-8333-333333333333",
+                environment="local_test",
+            )
+        )
+    initial = len(state["calls"])
+    commerce.dashboard(301, refresh_panel=True)
+    list_calls = state["calls"][initial:]
+    assert list_calls and all("33333333-3333-4333-8333-333333333333" not in str(call) for call in list_calls)
+    initial = len(state["calls"])
+    commerce.dashboard(301, refresh_panel=True, refresh_subscription_id=sid)
+    assert state["calls"][initial:] == list_calls
+    initial = len(state["calls"])
+    with pytest.raises(DomainError) as denied:
+        commerce.dashboard(301, refresh_panel=True, refresh_subscription_id="foreign-owned")
+    assert denied.value.status == 404 and len(state["calls"]) == initial
+
+
+def test_concurrent_selected_refresh_is_bounded_to_one_snapshot(entitlement):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    _, _, commerce, _, state, sid, _, _, _ = entitlement
+    started, release = Event(), Event()
+
+    def pause(_):
+        started.set()
+        assert release.wait(15)
+
+    state["next_read_hook"] = pause
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(commerce._refresh_panel, 301, sid)
+        try:
+            assert started.wait(15)
+            calls = len(state["calls"])
+            assert commerce._refresh_panel(301, sid) == {sid: {"status": "busy"}}
+            assert len(state["calls"]) == calls
+        finally:
+            release.set()
+        assert future.result(timeout=15)[sid]["status"] == "ok"
+
+
 @pytest.mark.parametrize("capacity,total", [(12, "77.00"), (2, "37.00")])
 def test_manual_panel_limit_and_extension_drive_profile_and_renewal(entitlement, capacity, total):
     db, _, commerce, _, state, sid, _, segment_id, old_expiry = entitlement

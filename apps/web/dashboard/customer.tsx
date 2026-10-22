@@ -101,7 +101,7 @@ function retentionBlocked(subscription: Subscription) {
     subscription.retention_state && subscription.retention_state !== "none",
   );
 }
-function SubscriptionDeletionNotice({
+export function SubscriptionDeletionNotice({
   notice,
   supportUrl,
   onDismiss,
@@ -139,7 +139,11 @@ function SubscriptionDeletionNotice({
     <section className="notice subscription-deletion-notice">
       <div>
         <strong>{notice.name}</strong>
-        <p>Подписка была удалена. Если это ошибка, обратитесь в поддержку.</p>
+        <p>
+          {notice.reason === "expiry_cleanup"
+            ? "Ваша подписка удалена, поскольку после окончания её срока действия прошло 7 дней."
+            : "Подписка была удалена. Если это ошибка, обратитесь в поддержку."}
+        </p>
         <p>{date(notice.deleted_at, true)} · МСК</p>
         <SupportLink
           url={supportUrl}
@@ -339,6 +343,8 @@ export function Customer({
     body: string;
     path: string;
     subscriptionId: string;
+    rotationJobId?: string;
+    idempotencyKey?: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -376,6 +382,40 @@ export function Customer({
       openingRequest.current = null;
     };
   }, [session.account.id, page, selected]);
+  function acceptCheckoutSnapshot(
+    action: Action,
+    target: Subscription,
+    fresh: Dashboard,
+  ) {
+    const current = fresh.subscriptions.find((item) => item.id === target.id);
+    if (
+      fresh.account.id !== session.account.id ||
+      !current ||
+      retentionBlocked(current)
+    )
+      throw new Error("Подписка недоступна для выбранного действия.");
+    dashboard.setData(fresh);
+    if (
+      current.renewal_pricing_state === "blocked" &&
+      !(action === "renew" && current.renewal_device_limit_required)
+    ) {
+      const messages: Record<string, string> = {
+        panel_capacity_unpriced:
+          "Лимит устройств требует проверки. Обратитесь в поддержку.",
+        panel_product_unverified:
+          "Тариф панели требует проверки. Обратитесь в поддержку.",
+        panel_access_restricted:
+          "Доступ к подписке ограничен. Обратитесь в поддержку.",
+      };
+      throw new Error(
+        messages[current.renewal_pricing_error || ""] ||
+          (current.panel_sync_state === "pending"
+            ? "Изменения подключения выполняются. Дождитесь завершения операции."
+            : "Не удалось проверить данные панели. Повторите действие после обновления подписки."),
+      );
+    }
+    return current;
+  }
   async function openCheckout(action: Action, target: Subscription) {
     if (openingRequest.current) return;
     const controller = new AbortController();
@@ -389,19 +429,7 @@ export function Customer({
         { signal: controller.signal },
       );
       if (controller.signal.aborted) return;
-      const current = fresh.subscriptions.find((item) => item.id === target.id);
-      if (
-        fresh.account.id !== session.account.id ||
-        !current ||
-        retentionBlocked(current)
-      )
-        throw new Error("Подписка недоступна для выбранного действия.");
-      dashboard.setData(fresh);
-      if (current.renewal_pricing_state === "blocked") {
-        throw new Error(
-          "Не удалось проверить данные панели. Повторите действие после обновления подписки.",
-        );
-      }
+      const current = acceptCheckoutSnapshot(action, target, fresh);
       setCheckout({ action, subscription: current });
     } catch (failure) {
       if (!controller.signal.aborted) setError(failure);
@@ -434,25 +462,51 @@ export function Customer({
     }
     if (notificationAction.operation !== "renew") return;
     const controller = new AbortController();
+    setCheckout(null);
     const quoteId = notificationAction.metadata.quote_id;
     api<Quote>(
       `/subscriptions/${encodeURIComponent(target.id)}/renewal-offer${quoteId ? `?quote_id=${encodeURIComponent(quoteId)}` : ""}`,
       { signal: controller.signal },
     )
-      .then((quote) => {
+      .then(async (quote) => {
         if (controller.signal.aborted) return;
         if (quote.subscription_id !== target.id || quote.action !== "renew") {
           throw new Error("Не удалось проверить расчёт продления.");
         }
-        setCheckout({ action: "renew", subscription: target, quote });
+        // renewal-offer already refreshes this owned subscription before pricing.
+        const fresh = await api<Dashboard>("/dashboard", {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        const current = acceptCheckoutSnapshot("renew", target, fresh);
+        setCheckout({ action: "renew", subscription: current, quote });
       })
       .catch((failure) => {
         if (!controller.signal.aborted) setError(failure);
       });
     return () => controller.abort();
-  }, [notificationAction]);
+  }, [notificationAction, session.account.id]);
   const subscription =
     subscriptions.find((s) => s.id === selected) || subscriptions[0];
+  useEffect(() => {
+    if (page !== "devices" || !subscription || retentionBlocked(subscription))
+      return;
+    const controller = new AbortController();
+    api<Dashboard>(
+      `/dashboard?refresh_panel=true&refresh_subscription_id=${encodeURIComponent(subscription.id)}`,
+      { signal: controller.signal },
+    )
+      .then((fresh) => {
+        if (controller.signal.aborted) return;
+        if (fresh.account.id !== session.account.id)
+          throw new Error("Не удалось проверить подписку.");
+        dashboard.setData(fresh);
+      })
+      .catch((failure) => {
+        if (!controller.signal.aborted) setError(failure);
+      });
+    return () => controller.abort();
+  }, [page, session.account.id, subscription?.id]);
   const targetHeld = Boolean(subscription && retentionBlocked(subscription));
   const checkoutSubscription =
     checkout?.subscription &&
@@ -505,7 +559,30 @@ export function Customer({
     setBusy(true);
     setError(null);
     try {
-      await api(confirmation.path, { method: "POST" });
+      if (
+        confirmation.rotationJobId &&
+        !(
+          "credential_rotation_cancelable" in target &&
+          target.credential_rotation_cancelable &&
+          target.credential_rotation_job_id === confirmation.rotationJobId
+        )
+      ) {
+        throw new Error(
+          "Состояние обновления ссылки изменилось. Обновите подписку.",
+        );
+      }
+      await api(confirmation.path, {
+        method: "POST",
+        ...(confirmation.rotationJobId
+          ? {
+              body: {
+                job_id: confirmation.rotationJobId,
+                idempotency_key: confirmation.idempotencyKey,
+                confirmed: true,
+              },
+            }
+          : {}),
+      });
       setConfirmation(null);
       dashboard.reload();
     } catch (e) {
@@ -555,6 +632,31 @@ export function Customer({
         )}
       </SectionTitle>
       {Boolean(error) && !confirmation && <ErrorState error={error} />}
+      {(page === "home" || page === "devices") &&
+        subscription?.credential_rotation_cancelable &&
+        subscription.credential_rotation_job_id && (
+          <div className="notice">
+            <p>
+              Обновление ссылки не началось. Можно отменить ожидающую операцию;
+              действующая ссылка сохранится.
+            </p>
+            <Button
+              tone="secondary"
+              onClick={() =>
+                setConfirmation({
+                  title: "Отменить обновление ссылки?",
+                  body: "Будет отменена только ещё не начатая операция. Новая ссылка не будет создана.",
+                  path: `/subscriptions/${encodeURIComponent(subscription.id)}/credentials/rotation/cancel`,
+                  subscriptionId: subscription.id,
+                  rotationJobId: subscription.credential_rotation_job_id!,
+                  idempotencyKey: crypto.randomUUID(),
+                })
+              }
+            >
+              Отменить обновление ссылки
+            </Button>
+          </div>
+        )}
       {opening && <p role="status">Проверяем данные подписки…</p>}
       {page === "news" && (
         <NodeNews hasSubscription={subscriptions.length > 0} />
@@ -1550,6 +1652,13 @@ export function Checkout({
                 ))}
               </select>
             </label>
+            {target.action === "renew" &&
+              target.subscription?.renewal_device_limit_required && (
+                <p className="notice">
+                  Новый срок будет рассчитан с конечным лимитом устройств по
+                  тарифу. Лимит и цену покажем до подтверждения заказа.
+                </p>
+              )}
             <div className="field-grid">
               {target.action !== "devices" && (
                 <label>
@@ -1674,6 +1783,14 @@ export function Checkout({
               checked={acceptedLegal}
               onChange={setAcceptedLegal}
             />
+            {target.action === "renew" &&
+              target.subscription?.renewal_device_limit_required && (
+                <p className="notice">
+                  Новый срок подписки: конечный лимит — {quote.devices_limit}{" "}
+                  устройств. Подтверждая заказ, вы соглашаетесь с этим лимитом
+                  на новый срок.
+                </p>
+              )}
             <div className="quote-total">
               <span>{messages.mb99649088e}</span>
               <strong>{money(quote.total, quote.currency)}</strong>

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Button } from "@ui/components";
-import { Customer, RenewalDiscount, SubscriptionRetention } from "./customer";
+import {
+  Customer,
+  RenewalDiscount,
+  SubscriptionRetention,
+  SubscriptionDeletionNotice,
+} from "./customer";
 import { Editor } from "./admin-editor";
 import { RetentionControls } from "./admin-operations";
 import type { Mutation } from "./admin";
@@ -290,4 +295,34 @@ it("keeps the old global campaign and a separate near-expiry owner setting", () 
   expect(html).toContain("Продление перед окончанием срока");
   expect(html).toContain('value="10"');
   expect(html).toContain('value="20"');
+});
+
+describe("deletion notice reasons", () => {
+  for (const reason of [
+    "expiry_cleanup",
+    "manual_panel",
+    "verified_panel_absence",
+  ] as const) {
+    it(`uses only the supplied deletion cause ${reason}`, () => {
+      const html = renderToStaticMarkup(
+        <SubscriptionDeletionNotice
+          notice={{
+            subscription_id: "synthetic-sub",
+            name: "Подписка",
+            reason,
+            deleted_at: "2026-10-22T00:00:00Z",
+          }}
+          onDismiss={() => {}}
+        />,
+      );
+      expect(
+        html.includes(
+          "Ваша подписка удалена, поскольку после окончания её срока действия прошло 7 дней.",
+        ),
+      ).toBe(reason === "expiry_cleanup");
+      expect(html.includes("Подписка была удалена. Если это ошибка")).toBe(
+        reason !== "expiry_cleanup",
+      );
+    });
+  }
 });

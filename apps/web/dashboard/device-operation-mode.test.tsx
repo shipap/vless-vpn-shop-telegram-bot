@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { CustomerDevices } from "./customer-devices";
 
 const state = vi.hoisted(() => ({
+  rotation: null as string | null,
   slots: [] as unknown[],
   cursor: 0,
   requests: [] as { path: string; options: any }[],
@@ -42,7 +43,10 @@ vi.mock("@api/client", async (original) => ({
 function render() {
   state.cursor = 0;
   return CustomerDevices({
-    subscription: { id: "own-sub" } as never,
+    subscription: {
+      id: "own-sub",
+      credential_rotation_state: state.rotation,
+    } as never,
     blocked: false,
     onAdd: () => {},
     onConnect: () => {},
@@ -63,6 +67,7 @@ function find(tree: any, caption: string): any {
 }
 beforeEach(() => {
   state.slots = [];
+  state.rotation = null;
   state.requests = [];
 });
 it.each([
@@ -87,3 +92,10 @@ it.each([
     });
   },
 );
+
+it("shows blocked credential rotation as manual review rather than pending", () => {
+  state.rotation = "blocked";
+  const tree = render();
+  expect(JSON.stringify(tree)).toContain("Перевыпуск ссылки требует сверки");
+  expect(find(tree, "Перевыпустить ссылку").props.disabled).toBe(true);
+});

@@ -92,8 +92,17 @@ def verified_read_proof_in(session, sub, binding, proof_id, *, deleted_at=None):
     marker = session.get(Setting, proof_id)
     value = marker.value if marker and isinstance(marker.value, dict) else {}
     required = {
-        "version", "subscription_id", "owner_id", "environment", "scope_id", "panel_host",
-        "contract", "binding", "subscription_version", "authority_node_uuid", "observed_at",
+        "version",
+        "subscription_id",
+        "owner_id",
+        "environment",
+        "scope_id",
+        "panel_host",
+        "contract",
+        "binding",
+        "subscription_version",
+        "authority_node_uuid",
+        "observed_at",
     }
     try:
         observed = instant(value["observed_at"])
@@ -243,6 +252,7 @@ def owner_deletion_message(state):
         "expiry_cleanup": "7 дней после окончания",
         "verified_panel_absence": "подтверждённое отсутствие в панели",
     }[state.reason]
+
     def label(value):
         return " ".join(re.sub(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+", "[ссылка скрыта]", value).split())[:200]
 
@@ -477,7 +487,9 @@ def archive_absence_in(session, commerce, sub, binding, *, reason, proof_id):
         "subscription-deleted:" + sub.id,
         "subscription_deleted",
         "Подписка удалена",
-        "Подписка была удалена. Если это ошибка, обратитесь в поддержку",
+        "Ваша подписка удалена, поскольку после окончания её срока действия прошло 7 дней."
+        if reason == "expiry_cleanup"
+        else "Подписка была удалена. Если это ошибка, обратитесь в поддержку",
         channel="telegram",
         allow_push=False,
     )

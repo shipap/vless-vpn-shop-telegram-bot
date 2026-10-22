@@ -72,6 +72,11 @@ class CredentialRotation(ConfirmedOperation):
     revoke_only_passwords: bool = False
 
 
+class CredentialRotationCancel(ConfirmedOperation):
+    reason: str = "Подтверждена отмена не начатого обновления ссылки"
+    job_id: str = Field(min_length=1, max_length=64)
+
+
 class OwnerGrant(ConfirmedOperation):
     product_id: str = Field(max_length=64)
     subscription_id: str | None = Field(default=None, max_length=64)
@@ -259,6 +264,12 @@ def install_v11_routes(
             body.idempotency_key,
             confirmed=body.confirmed,
             revoke_only_passwords=body.revoke_only_passwords,
+        )
+
+    @app.post("/api/v1/subscriptions/{sid}/credentials/rotation/cancel")
+    def cancel_rotation(sid: str, body: CredentialRotationCancel, pair=Depends(authenticated)):
+        return customer.cancel_rotation(
+            pair[0].id, sid, body.job_id, body.idempotency_key, confirmed=body.confirmed
         )
 
     @app.post("/api/v1/admin/users/{account_id}/message")

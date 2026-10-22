@@ -369,7 +369,11 @@ def adopt(session, sub, snapshot, binding):
     remember_restriction(session, sub, snapshot, binding)
     active = current_segment(session, sub, moment)
     marker = override(session, sub, moment)
-    preserved_null = imported_null_capacity(session, sub, moment)
+    preserved_null = (
+        imported_null_capacity(session, sub, moment, current_only=False)
+        if binding == registered_binding(session, sub)
+        else None
+    )
     target = applied_target(session, sub)
     expected_expiry = (marker or {}).get("expires_at") or (target or {}).get("expires_at")
     if expected_expiry is None:
@@ -797,6 +801,34 @@ def local_status(session, sub):
     return known[0] if known and all(status == known[0] for status in known) else "suspended"
 
 
+def expired_legacy_finite_renewal(session, sub, record, state):
+    """Expired imported NULL may buy new finite terms; this creates no legacy rights/proof."""
+    from .panel_v3 import explicit_null_evidence, production_binding_key
+
+    moment = now()
+    marker = imported_baseline(session, sub, moment)
+    root = session.get(Setting, production_binding_key(sub.id)) if marker else None
+    evidence = root.value.get("capacity_evidence") if root else None
+    return bool(
+        state == "fresh"
+        and marker
+        and sub.devices_limit is None
+        and marker.get("devices_limit") is None
+        and record
+        and record.status == "EXPIRED"
+        and "devices_limit" in record.payload
+        and record.payload["devices_limit"] is None
+        and explicit_null_evidence(evidence)
+        and instant(evidence["until"]) <= moment
+        and instant(record.payload["expires_at"]) <= moment
+        and sub.expires_at is not None
+        and sub.expires_at <= moment
+        and not remaining_segments(session, sub, moment)
+        and local_status(session, sub) in {"active", "expired"}
+        and not remote_status(session, sub)
+    )
+
+
 def facts(session, sub, result=None):
     record = observation(session, sub)
     payload = record.payload if record and isinstance(record.payload, dict) else {}
@@ -832,9 +864,21 @@ def facts(session, sub, result=None):
         and capacity is None
         and imported_null_capacity(session, sub, current_only=False) is not None
     )
-    priced = priced and bool(product_verified and product.available)
-    if remote_status(session, sub):
-        priced = False
+    error = (
+        (
+            "panel_sync_required"
+            if state != "fresh"
+            else "panel_access_restricted"
+            if remote_status(session, sub)
+            else "panel_product_unverified"
+            if not product_verified
+            else "panel_capacity_unpriced"
+            if not priced
+            else None
+        )
+        if bound(sub)
+        else None
+    )
     return {
         "expires_at": payload.get("expires_at") or (sub.expires_at.isoformat() if sub.expires_at else None),
         "paid_horizon": (horizon.isoformat() if (horizon := paid_horizon(session, sub)) else None),
@@ -842,11 +886,16 @@ def facts(session, sub, result=None):
         "panel_sync_error": (result or {}).get("error") or (record.last_error if record else None),
         "panel_device_limit": capacity,
         **product_fact,
-        "renewal_pricing_state": "ready" if (not bound(sub) or state == "fresh" and priced) else "blocked",
+        "renewal_pricing_state": "blocked" if error else "ready",
+        "renewal_pricing_error": error,
+        "renewal_device_limit_required": (
+            error in {None, "panel_capacity_unpriced"}
+            and expired_legacy_finite_renewal(session, sub, record, state)
+        ),
     }
 
 
-def require_pricing(session, sub):
+def require_pricing(session, sub, *, finite_renewal=False):
     if not bound(sub):
         return
     value = facts(session, sub)
@@ -876,7 +925,9 @@ def require_pricing(session, sub):
             "Тариф панели не сопоставлен с действующим каталогом однозначно. Владелец должен проверить группы и условия тарифа.",
             409,
         )
-    if value["renewal_pricing_state"] != "ready":
+    if value["renewal_pricing_state"] != "ready" and not (
+        finite_renewal and value["renewal_device_limit_required"]
+    ):
         raise DomainError(
             "panel_capacity_unpriced",
             "Лимит панели не позволяет рассчитать цену. Владелец должен задать конечное число устройств и условия тарифа.",

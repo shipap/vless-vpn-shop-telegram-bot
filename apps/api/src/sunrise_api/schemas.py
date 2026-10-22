@@ -608,11 +608,23 @@ class SubscriptionDto(BaseModel):
     traffic_limit_bytes: str | None = None
     device_inventory_state: Literal["unknown", "fresh", "stale", "unavailable"] = "unknown"
     credential_rotation_state: str | None = None
+    credential_rotation_job_id: str | None = None
+    credential_rotation_cancelable: bool = False
     paid_horizon: str | None = None
     panel_sync_state: Literal["fresh", "stale", "unknown", "pending", "denied"] = "unknown"
     panel_sync_error: str | None = None
     panel_device_limit: int | None = None
     renewal_pricing_state: Literal["ready", "blocked"] = "blocked"
+    renewal_pricing_error: (
+        Literal[
+            "panel_sync_required",
+            "panel_access_restricted",
+            "panel_product_unverified",
+            "panel_capacity_unpriced",
+        ]
+        | None
+    ) = None
+    renewal_device_limit_required: bool = False
     panel_product_state: Literal["matched", "unknown", "ambiguous"] = "unknown"
     panel_product_id: str | None = None
 

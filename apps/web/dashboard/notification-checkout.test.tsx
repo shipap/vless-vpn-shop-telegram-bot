@@ -7,9 +7,15 @@ import type { Catalog, Dashboard, Session } from "@api/types";
 const harness = vi.hoisted(() => ({
   slots: [] as unknown[],
   cursor: 0,
-  effects: [] as (() => void)[],
+  effects: [] as (() => unknown)[],
+  cleanups: [] as (() => void)[],
+  effectDeps: [] as (unknown[] | undefined)[],
+  effectCursor: 0,
+  beforeDashboard: undefined as undefined | (() => void),
   requests: [] as string[],
   tree: null as unknown,
+  freshValues: {} as Record<string, unknown>,
+  freshAccountId: "9007199254740993123",
   quote: {
     id: "fresh-server-quote",
     subscription_id: "own-sub",
@@ -43,8 +49,12 @@ vi.mock("react", async (original) => ({
       },
     ];
   },
-  useEffect: (run: () => void) => {
-    harness.effects.push(run);
+  useEffect: (run: () => unknown, deps?: unknown[]) => {
+    const slot = harness.effectCursor++;
+    const previous = harness.effectDeps[slot];
+    if (!previous || !deps || deps.some((v, i) => v !== previous[i]))
+      harness.effects.push(run);
+    harness.effectDeps[slot] = deps;
   },
   useRef: (initial: unknown) => ({ current: initial }),
 }));
@@ -55,7 +65,26 @@ vi.mock("@api/client", async (original) => ({
   ...(await original<typeof import("@api/client")>()),
   api: async (path: string) => {
     harness.requests.push(path);
-    return harness.quote;
+    if (path.startsWith("/dashboard")) harness.beforeDashboard?.();
+    return path.startsWith("/dashboard")
+      ? {
+          account: { id: harness.freshAccountId },
+          subscriptions: [
+            {
+              id: "own-sub",
+              name: "Свежая подписка",
+              status: "expired",
+              devices_limit: null,
+              panel_device_limit: null,
+              devices: [],
+              segments: [],
+              retention_state: "none",
+              ...harness.freshValues,
+            },
+          ],
+          payments: [],
+        }
+      : harness.quote;
   },
 }));
 function node(
@@ -113,6 +142,7 @@ async function render(
           devices: [],
           segments: [],
           retention_state: state,
+          renewal_device_limit_required: false,
         },
       ],
       payments: [],
@@ -124,18 +154,33 @@ async function render(
       metadata: { subscription_id: sid, quote_id: "saved-quote" },
     },
   } as Parameters<typeof Customer>[0];
+  props.dashboard.setData = (value) => {
+    props.dashboard.data =
+      typeof value === "function" ? value(props.dashboard.data) : value;
+  };
   harness.cursor = 0;
+  harness.effectCursor = 0;
   harness.tree = Customer(props);
-  for (const effect of harness.effects.splice(0)) effect();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (const effect of harness.effects.splice(0)) {
+    const cleanup = effect();
+    if (typeof cleanup === "function")
+      harness.cleanups.push(cleanup as () => void);
+  }
+  for (let i = 0; i < 8; i++) await Promise.resolve();
   harness.cursor = 0;
+  harness.effectCursor = 0;
   harness.tree = Customer(props);
 }
 beforeEach(() => {
   harness.slots = [];
   harness.effects = [];
+  harness.cleanups = [];
+  harness.effectDeps = [];
+  harness.effectCursor = 0;
+  harness.beforeDashboard = undefined;
   harness.requests = [];
+  harness.freshValues = {};
+  harness.freshAccountId = "9007199254740993123";
   vi.stubGlobal("location", { search: "" });
 });
 describe("owned renewal notification checkout", () => {
@@ -157,6 +202,7 @@ describe("owned renewal notification checkout", () => {
     await render("own-sub");
     expect(harness.requests).toEqual([
       "/subscriptions/own-sub/renewal-offer?quote_id=saved-quote",
+      "/dashboard",
     ]);
     expect(node(harness.tree, "Checkout")?.props.target).toMatchObject({
       action: "renew",
@@ -182,6 +228,7 @@ describe("owned renewal notification checkout", () => {
     );
     expect(harness.requests).toEqual([
       "/subscriptions/own-sub/renewal-offer?quote_id=saved-quote",
+      "/dashboard",
     ]);
   });
   for (const [sid, state] of [
@@ -195,4 +242,61 @@ describe("owned renewal notification checkout", () => {
       expect(node(harness.tree, "Checkout")).toBeNull();
     });
   }
+});
+
+it("uses fresh server eligibility in notification-driven finite renewal and displays consent", async () => {
+  harness.freshValues = {
+    renewal_device_limit_required: true,
+    renewal_pricing_state: "blocked",
+    renewal_pricing_error: "panel_capacity_unpriced",
+  };
+  await render("own-sub");
+  const checkout = node(harness.tree, "Checkout")!;
+  expect(checkout.props.target).toMatchObject({
+    subscription: {
+      name: "Свежая подписка",
+      renewal_device_limit_required: true,
+    },
+    quote: harness.quote,
+  });
+  expect(harness.requests).toEqual([
+    "/subscriptions/own-sub/renewal-offer?quote_id=saved-quote",
+    "/dashboard",
+  ]);
+  harness.slots = [];
+  harness.cursor = 0;
+  const html = renderToStaticMarkup(
+    createElement(
+      checkout.type as import("react").ComponentType,
+      checkout.props,
+    ),
+  );
+  expect(html).toContain(
+    "Подтверждая заказ, вы соглашаетесь с этим лимитом на новый срок.",
+  );
+});
+it("rejects a notification offer if fresh subscription projection belongs to another account", async () => {
+  harness.freshAccountId = "9007199254740993999";
+  await render("own-sub");
+  expect(node(harness.tree, "Checkout")).toBeNull();
+  expect(
+    (node(harness.tree, "ErrorState")?.props.error as Error).message,
+  ).toContain("Подписка недоступна");
+});
+
+it("does not initialize renewal twice after refreshed dashboard changes", async () => {
+  await render("own-sub");
+  for (const effect of harness.effects.splice(0)) effect();
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+  expect(harness.requests).toEqual([
+    "/subscriptions/own-sub/renewal-offer?quote_id=saved-quote",
+    "/dashboard",
+  ]);
+});
+it("ignores a notification offer when effect cleanup aborts before the fresh projection resolves", async () => {
+  harness.beforeDashboard = () => {
+    for (const cleanup of harness.cleanups) cleanup();
+  };
+  await render("own-sub");
+  expect(node(harness.tree, "Checkout")).toBeNull();
 });

@@ -394,6 +394,11 @@ class Commerce:
     def accept_legal(self, account_id, documents, source, context):
         return self.legal.accept(account_id, documents, source, context)
 
+    def resume_telegram_notifications(self, account_id, telegram_id):
+        from .notifications import NotificationService
+
+        return NotificationService(self.db, self.public_settings).resume_telegram(account_id, telegram_id)
+
     @property
     def promos(self):
         from .promos import Promos
@@ -946,7 +951,7 @@ class Commerce:
             self._assert_new_operations(session)
             self.legal.require_current(session, account)
             self._assert_subscription_operations(session, sub)
-            panel_entitlements.require_pricing(session, sub)
+            panel_entitlements.require_pricing(session, sub, finite_renewal=True)
             if session.scalar(
                 select(Agreement.id)
                 .where(Agreement.subscription_id == sid, Agreement.state != "stopped")
@@ -1103,7 +1108,7 @@ class Commerce:
             if sub:
                 self._assert_subscription_operations(s, sub)
                 if action == "renew":
-                    panel_entitlements.require_pricing(s, sub)
+                    panel_entitlements.require_pricing(s, sub, finite_renewal=True)
                     if panel_entitlements.bound(sub) and p.id != sub.product_id:
                         raise DomainError(
                             "panel_product_changed",
@@ -1132,7 +1137,10 @@ class Commerce:
             devices = max((sub.devices_limit or 0) if sub else 0, p.included_devices)
             if sub and action == "renew" and panel_entitlements.bound(sub):
                 devices = panel_entitlements.facts(s, sub)["panel_device_limit"]
-                if devices is None and panel_entitlements.imported_null_capacity(s, sub, current_only=False):
+                if devices is None and (
+                    panel_entitlements.imported_null_capacity(s, sub, current_only=False)
+                    or panel_entitlements.facts(s, sub)["renewal_device_limit_required"]
+                ):
                     devices = p.included_devices
             version = sub.version if sub else 0
             policy = self._setting(s, "discounts", {})
@@ -1817,7 +1825,7 @@ class Commerce:
                 if sub.version != q.snapshot["version"]:
                     raise DomainError("quote_stale", "Подписка изменилась. Обновите расчёт.")
                 if q.snapshot["action"] == "renew":
-                    panel_entitlements.require_pricing(s, sub)
+                    panel_entitlements.require_pricing(s, sub, finite_renewal=True)
                     if panel_entitlements.bound(sub) and p.id != sub.product_id:
                         raise DomainError(
                             "panel_product_changed", "Тариф изменён в панели. Обновите расчёт продления.", 409
@@ -2527,12 +2535,18 @@ class Commerce:
                     .where(
                         Job.kind == "credential_rotate",
                         Job.payload["subscription_id"].as_string() == sub.id,
-                        Job.state.in_(["pending", "in_flight", "review"]),
+                        Job.state.in_(["pending", "in_flight", "review", "blocked"]),
                     )
                     .order_by(Job.id.desc())
                     .limit(1)
                 )
                 subs[-1]["credential_rotation_state"] = rotation.state if rotation else None
+                from .customer_operations import rotation_cancelable
+
+                subs[-1]["credential_rotation_job_id"] = rotation.id if rotation else None
+                subs[-1]["credential_rotation_cancelable"] = rotation_cancelable(
+                    rotation, sub, panel_entitlements.registered_binding(s, sub)
+                )
                 if self.scoped_payments and sub.environment in {"local_test", "sandbox"}:
                     subs[-1].update({"retention_state": "none", "cleanup_at": None, "archived_at": None})
                 else:

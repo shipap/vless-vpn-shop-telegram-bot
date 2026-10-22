@@ -7,8 +7,37 @@ from types import SimpleNamespace
 from sqlalchemy import select
 from sunrise_core.errors import DomainError, missing
 
-from .db import Device, Job, PanelObservation, Setting, uid
+from .db import Audit, Device, Job, PanelObservation, Setting, now, uid
 from .moderation import DeviceModeration
+
+
+def rotation_cancelable(job, sub, binding):
+    payload = job.payload if job and isinstance(job.payload, dict) else {}
+    return bool(
+        job
+        and binding
+        and job.kind == "credential_rotate"
+        and job.state == "blocked"
+        and type(job.attempts) is int
+        and job.attempts == 0
+        and job.last_error == "panel_target_denied"
+        and job.account_id == sub.account_id
+        and payload.get("subscription_id") == sub.id
+        and payload.get("environment") == sub.environment
+        and payload.get("scope_id") == binding.get("scope_id")
+        and type(payload.get("version")) is int
+        and payload["version"] == sub.version
+        and type(payload.get("revoke_only_passwords")) is bool
+        and payload.get("panel_binding") == binding
+        and not {
+            "lease",
+            "rotate_started",
+            "before_short_uuid",
+            "before_sub_revoked_at",
+            "before_expires_at",
+            "next_short_uuid",
+        }.intersection(payload)
+    )
 
 
 class CustomerOperations:
@@ -121,7 +150,19 @@ class CustomerOperations:
             saved = {**saved, "unlink_mode": request["unlink_mode"]}
         if record and saved != request:
             raise DomainError("idempotency_conflict", "Ключ использован для другого действия.", 409)
-        return marker, record.value["result"] if record else None
+        result = record.value["result"] if record else None
+        if result and request.get("kind") == "credential_rotate":
+            job = session.get(Job, result.get("job_id"))
+            if (
+                job
+                and job.account_id == account.id
+                and job.payload.get("subscription_id") == request["subscription_id"]
+            ):
+                if job.state in {"blocked", "review"}:
+                    result = result | {"status": "review_required"}
+                elif job.state == "canceled":
+                    result = result | {"status": "rotate_canceled"}
+        return marker, result
 
     @staticmethod
     def _legacy_unlink_mode_matches(session, account, result, request):
@@ -314,7 +355,7 @@ class CustomerOperations:
                 select(Job.id).where(
                     Job.kind == "credential_rotate",
                     Job.payload["subscription_id"].as_string() == sid,
-                    Job.state.in_(["pending", "in_flight", "review"]),
+                    Job.state.in_(["pending", "in_flight", "review", "blocked"]),
                 )
             )
             if active:
@@ -341,4 +382,55 @@ class CustomerOperations:
             session.flush()
             result = {"status": "rotate_pending", "job_id": job.id}
             session.add(Setting(key=marker, value={"request": request, "result": result}))
+            return result
+
+    def cancel_rotation(self, account_id, sid, job_id, idempotency_key, confirmed=False):
+        self._validate(idempotency_key, confirmed)
+        request = {"kind": "credential_rotate_cancel", "subscription_id": sid, "job_id": job_id}
+        with self.db.transaction() as session:
+            account = self.commerce._account(session, account_id, True)
+            sub = self.commerce._sub(session, account.id, sid, True)
+            marker, prior = self._prior(session, account, idempotency_key, request)
+            if prior:
+                return prior
+            self._guards(session, account, sub)
+            binding = self._binding(session, account, sub)
+            job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
+            if not job or job.account_id != account.id or job.payload.get("subscription_id") != sid:
+                raise missing()
+            if not rotation_cancelable(job, sub, binding):
+                raise DomainError(
+                    "credential_rotation_cancel_denied",
+                    "Нельзя подтвердить, что обновление ссылки не началось. Обратитесь в поддержку.",
+                    409,
+                )
+            original_key = "customer_op:" + str(account.id) + ":" + job.key.rsplit(":", 1)[1]
+            original = session.get(Setting, original_key)
+            if (
+                not original
+                or original.value.get("request")
+                != {
+                    "kind": "credential_rotate",
+                    "subscription_id": sid,
+                    "revoke_only_passwords": job.payload["revoke_only_passwords"],
+                }
+                or original.value.get("result") != {"status": "rotate_pending", "job_id": job.id}
+                or job.key != "credential-rotate:" + sid + ":" + original_key.rsplit(":", 1)[1]
+            ):
+                raise DomainError("credential_rotation_cancel_denied", "Операция требует проверки.", 409)
+            self._before_queue(session, account, sub)
+            result = {"status": "rotate_canceled", "job_id": job.id}
+            job.state, job.last_error = "canceled", "customer_canceled_before_start"
+            job.payload = job.payload | {"canceled_at": now().isoformat(), "canceled_by": str(account.id)}
+            original.value = original.value | {"result": result}
+            session.add(Setting(key=marker, value={"request": request, "result": result}))
+            session.add(
+                Audit(
+                    actor_id=account.id,
+                    action="credential_rotation_canceled",
+                    target=job.id,
+                    reason="Пользователь отменил не начатое обновление ссылки.",
+                    details={"subscription_id": sid, "before": "blocked", "after": "canceled", "attempts": 0},
+                )
+            )
             return result

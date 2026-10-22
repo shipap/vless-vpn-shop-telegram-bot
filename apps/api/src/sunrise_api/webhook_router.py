@@ -78,6 +78,7 @@ class RemnawaveRouterSettings(BaseSettings):
     ingress_hosts: list[str] = Field(min_length=1)
     max_body_bytes: int = Field(default=262144, ge=1024, le=1048576)
     max_age_seconds: int = Field(default=300, ge=30, le=900)
+    user_primary_ack_on_membership_failure: bool = False
 
     @model_validator(mode="after")
     def fixed_targets(self):
@@ -278,7 +279,24 @@ def create_remnawave_router(settings=None, *, transport=None, clock=time.time):
                 admitted = await membership(request, *resource)
             except (httpx.HTTPError, ValueError, OSError, TypeError, RecursionError):
                 # Основной поток получает исходное событие и при отказе тестовой проверки.
-                await forward(request, raw, forwarded_headers)
+                primary = await forward(request, raw, forwarded_headers)
+                if (
+                    config.user_primary_ack_on_membership_failure
+                    and resource[0] == "user"
+                    and primary.status_code == 200
+                ):
+                    try:
+                        acknowledgement = json.loads(primary.body, object_pairs_hook=unique_object)
+                    except (ValueError, TypeError, UnicodeError, RecursionError):
+                        pass
+                    else:
+                        if (
+                            isinstance(acknowledgement, dict)
+                            and set(acknowledgement) == {"status"}
+                            and isinstance(acknowledgement["status"], str)
+                            and acknowledgement["status"] in {"accepted", "duplicate"}
+                        ):
+                            return primary
                 return JSONResponse({"code": "membership_unavailable"}, status_code=503)
             if resource[0] == "user":
                 return await forward(request, raw, forwarded_headers, test=admitted)

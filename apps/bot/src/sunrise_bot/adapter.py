@@ -510,6 +510,8 @@ class BotApplication:
                         "resolve_telegram", message.from_user.id, username=message.from_user.username
                     )
                 )
+                if hasattr(self.commerce, "resume_telegram_notifications"):
+                    await self.call("resume_telegram_notifications", account["id"], message.from_user.id)
                 start = re.fullmatch(r"/start(?:@\w+)? (utm_[A-Za-z0-9_-]{1,64})", text)
                 console = self.admin_console or getattr(self.admin, "bot_console", None)
                 if start and console:
@@ -632,6 +634,8 @@ class BotApplication:
                 account = await self.call(
                     "resolve_telegram", callback.from_user.id, username=callback.from_user.username
                 )
+                if hasattr(self.commerce, "resume_telegram_notifications"):
+                    await self.call("resume_telegram_notifications", account["id"], callback.from_user.id)
                 if item and item.action == "owner_device_notice":
                     from sunrise_core.errors import missing
 
@@ -726,7 +730,7 @@ class BotApplication:
         from sunrise_core.errors import DomainError
 
         sub = await self.subscription(aid, data["sid"])
-        if sub.get("credential_rotation_state") in {"pending", "in_flight", "review"}:
+        if sub.get("credential_rotation_state") in {"pending", "in_flight", "review", "blocked"}:
             raise DomainError(
                 "credential_rotation_pending", "Обновление ссылки ожидает завершения или проверки.", 409
             )
@@ -752,8 +756,8 @@ class BotApplication:
             )
         return inventory
 
-    async def devices_screen(self, uid, aid, data, mid):
-        sub = await self.subscription(aid, data["sid"])
+    async def devices_screen(self, uid, aid, data, mid, *, subscription_snapshot=None):
+        sub = subscription_snapshot or await self.subscription(aid, data["sid"])
         inventory = (
             await self.customer_call(
                 "inventory", aid, sub["id"], refresh=data.get("refresh") is True or "page" not in data
@@ -766,7 +770,7 @@ class BotApplication:
         active = [d for d in inventory["devices"] if not d.get("revoked")]
         page = max(0, min(int(data.get("page", 0)), max(0, (len(active) - 1) // 5)))
         view = active[page * 5 : (page + 1) * 5]
-        can_mutate = known and rotation not in {"pending", "in_flight", "review"}
+        can_mutate = known and rotation not in {"pending", "in_flight", "review", "blocked"}
         buttons = []
         if can_mutate:
             buttons += [
@@ -823,7 +827,7 @@ class BotApplication:
         if rotation:
             body += "\nОбновление ссылки: " + (
                 "требуется ручная проверка; повторный запрос запрещён."
-                if rotation == "review"
+                if rotation in {"review", "blocked"}
                 else "ожидается подтверждение панели."
             )
         if data.get("origin"):
@@ -906,7 +910,11 @@ class BotApplication:
             "promo_claim_apply",
         }:
             sub = subscription_snapshot or await self.subscription(
-                aid, data["sid"], refresh_panel=operation_entry
+                aid,
+                data["sid"],
+                refresh_panel=operation_entry
+                or action == "devices"
+                and ("page" not in data or data.get("refresh") is True),
             )
             subscription_snapshot = sub
             if copy.retention_blocked(sub):
@@ -914,14 +922,24 @@ class BotApplication:
                     uid, aid, "subscription", {"sid": sub["id"]}, mid, token, subscription_snapshot=sub
                 )
             if operation_entry:
-                if sub.get("renewal_pricing_state") == "blocked":
+                if sub.get("renewal_pricing_state") == "blocked" and not (
+                    data.get("intent") == "renew" and sub.get("renewal_device_limit_required") is True
+                ):
                     from sunrise_core.errors import DomainError
 
-                    raise DomainError(
-                        "panel_sync_required",
-                        "Не удалось проверить данные панели. Обновите подписку перед выбранным действием.",
-                        409,
+                    code = sub.get("renewal_pricing_error") or "panel_sync_required"
+                    messages = {
+                        "panel_capacity_unpriced": "Лимит устройств требует проверки. Обратитесь в поддержку.",
+                        "panel_product_unverified": "Тариф панели требует проверки. Обратитесь в поддержку.",
+                        "panel_access_restricted": "Доступ к подписке ограничен. Обратитесь в поддержку.",
+                    }
+                    message = messages.get(
+                        code,
+                        "Изменения подключения выполняются. Дождитесь завершения операции."
+                        if sub.get("panel_sync_state") == "pending"
+                        else "Не удалось проверить данные панели. Обновите подписку перед выбранным действием.",
                     )
+                    raise DomainError(code if code in messages else "panel_sync_required", message, 409)
                 if data.get("intent") == "renew":
                     data = {**data, "product_id": sub["product_id"]}
         if action.startswith("admin_promo"):
@@ -1151,7 +1169,12 @@ class BotApplication:
             if notices or agreements:
                 body = "Выберите подписку." if subs else copy.NO_SUBSCRIPTIONS
                 for item in notices:
-                    body += f"\n\n{item['name']}\nПодписка была удалена. Если это ошибка, обратитесь в поддержку.\n{moscow_datetime(item['deleted_at'])}"
+                    deletion_text = (
+                        "Ваша подписка удалена, поскольку после окончания её срока действия прошло 7 дней."
+                        if item.get("reason") == "expiry_cleanup"
+                        else "Подписка была удалена. Если это ошибка, обратитесь в поддержку."
+                    )
+                    body += f"\n\n{item['name']}\n{deletion_text}\n{moscow_datetime(item['deleted_at'])}"
                 buttons = subscription_buttons
                 buttons.append(("Добавить подписку", "products", {"intent": "purchase"}))
                 if agreements:
@@ -1621,6 +1644,8 @@ class BotApplication:
                     message_id=mid,
                 )
             period_notice = "Дополнительные скидки и бонусы применяются в расчёте. Итоговую сумму покажем перед подтверждением."
+            if subscription_snapshot and subscription_snapshot.get("renewal_device_limit_required") is True:
+                period_notice += " Новый срок будет рассчитан с конечным лимитом устройств по тарифу. Лимит и цену покажем до подтверждения заказа."
             nodes = card("Выберите период", period_notice)
             name = (product.get("content") or {}).get("name") or telegram_html_to_content(product["name"])
             nodes.append({"type": "paragraph", "children": name})
@@ -1852,7 +1877,14 @@ class BotApplication:
                 f"Устройств: {quote['devices_limit']}\nСрок после операции: {moscow_datetime(quote['resulting_expires_at'])}\nРасчёт действует до: {moscow_datetime(quote['expires_at'])}"
             )
             legal = await self.call("legal_status", aid)
-            nodes = card("Проверьте заказ", "") + self.group_sections(
+            finite_terms = (
+                f"Новый срок подписки: конечный лимит — {quote['devices_limit']} устройств. Подтверждая заказ, вы соглашаетесь с этим лимитом на новый срок."
+                if data.get("intent") == "renew"
+                and subscription_snapshot
+                and subscription_snapshot.get("renewal_device_limit_required") is True
+                else ""
+            )
+            nodes = card("Проверьте заказ", finite_terms) + self.group_sections(
                 [
                     self.section("quote_target", "Подписка", target),
                     self.section("quote_period", "Период", period_text),
@@ -2067,7 +2099,7 @@ class BotApplication:
                 ),
             )
         if action == "devices":
-            return await self.devices_screen(uid, aid, data, mid)
+            return await self.devices_screen(uid, aid, data, mid, subscription_snapshot=subscription_snapshot)
         if action == "revoke_confirm":
             await self.device_selection(aid, data)
             return await self.show(
@@ -2092,6 +2124,7 @@ class BotApplication:
                 "pending",
                 "in_flight",
                 "review",
+                "blocked",
             }:
                 from sunrise_core.errors import DomainError
 

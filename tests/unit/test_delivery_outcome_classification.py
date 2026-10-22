@@ -52,7 +52,8 @@ def test_smtp_preserves_definitive_refusal_without_claiming_timeout_rejected(exc
     [
         (400, {"ok": False, "error_code": 400}, "telegram_rejected"),
         (403, {"ok": False, "error_code": 403}, "telegram_forbidden"),
-        (502, {"ok": False, "error_code": 502}, "telegram_delivery_unknown"),
+        (502, {"ok": False, "error_code": 502}, "telegram_temporary_failure"),
+        (502, {}, "telegram_delivery_unknown"),
     ],
 )
 def test_telegram_preserves_explicit_refusal_and_ambiguous_server_failure(monkeypatch, status, data, code):

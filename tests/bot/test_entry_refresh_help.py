@@ -62,6 +62,55 @@ def test_profile_entry_requests_authoritative_panel_refresh():
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    "action,intent",
+    [("periods", "renew"), ("products", "upgrade"), ("products", "downgrade"), ("device_quote", "devices")],
+)
+def test_operation_entry_refreshes_selected_subscription_before_choices(action, intent):
+    async def run():
+        app, service, session, reads = tracked_setup()
+        original = service.dashboard
+        sid = service.subscriptions[0]["id"]
+
+        def dashboard(account_id, **kwargs):
+            result = original(account_id, **kwargs)
+            if kwargs.get("refresh_panel"):
+                service.subscriptions[0].update(product_id="universal", devices_limit=9)
+            return result
+
+        service.dashboard = dashboard
+        await app.execute(
+            "101", AID, action, {"sid": sid, "intent": intent, "product_id": "standard"}, None, ""
+        )
+        assert reads == ([(True, sid), (False, None)] if action == "device_quote" else [(True, sid)])
+        if action == "periods":
+            assert "Универсальный" in session.calls[-1].text
+        if intent == "upgrade":
+            assert "Стандартный" not in session.calls[-1].text
+        if action == "device_quote":
+            choices = [item.data for item in app.actions.values() if item.data.get("intent") == "devices"]
+            assert choices and all(value["product_id"] == "universal" for value in choices)
+
+    asyncio.run(run())
+
+
+def test_operation_entry_rejects_failed_panel_refresh_without_stale_choices():
+    from sunrise_core.errors import DomainError
+
+    async def run():
+        app, service, _, reads = tracked_setup()
+        service.subscriptions[0].update(panel_sync_state="stale", renewal_pricing_state="blocked")
+        sid = service.subscriptions[0]["id"]
+        with pytest.raises(DomainError) as failure:
+            await app.execute(
+                "101", AID, "periods", {"sid": sid, "intent": "renew", "product_id": "standard"}, None, ""
+            )
+        assert failure.value.code == "panel_sync_required"
+        assert reads == [(True, sid)]
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("due", (True, False, None))
 def test_help_warning_uses_server_indicator_only(due):
     async def run():
@@ -280,49 +329,138 @@ def test_first_connection_and_finite_traffic_use_server_projection_and_clear_unk
 
 
 @pytest.mark.parametrize(
-    "action,intent",
-    [("periods", "renew"), ("products", "upgrade"), ("products", "downgrade"), ("device_quote", "devices")],
+    "code,expected",
+    [
+        ("panel_capacity_unpriced", "Лимит устройств требует проверки"),
+        ("panel_product_unverified", "Тариф панели требует проверки"),
+        ("panel_access_restricted", "Доступ к подписке ограничен"),
+    ],
 )
-def test_operation_entry_refreshes_selected_subscription_before_choices(action, intent):
+def test_blocked_operation_keeps_actual_cause_and_main_menu_usable(code, expected):
+    from sunrise_core.errors import DomainError
+
     async def run():
         app, service, session, reads = tracked_setup()
-        original = service.dashboard
-        sid = service.subscriptions[0]["id"]
+        sub = service.subscriptions[0]
+        sub.update(panel_sync_state="fresh", renewal_pricing_state="blocked", renewal_pricing_error=code)
+        with pytest.raises(DomainError) as failure:
+            await app.execute("101", AID, "periods", {"sid": sub["id"], "intent": "renew"}, None, "")
+        assert failure.value.code == code
+        assert expected in failure.value.message
+        assert reads == [(True, sub["id"])]
+        from test_dispatcher import message_update
 
-        def dashboard(account_id, **kwargs):
-            result = original(account_id, **kwargs)
-            if kwargs.get("refresh_panel"):
-                service.subscriptions[0].update(product_id="universal", devices_limit=9)
-            return result
-
-        service.dashboard = dashboard
-        await app.execute(
-            "101", AID, action, {"sid": sid, "intent": intent, "product_id": "standard"}, None, ""
-        )
-        assert reads == ([(True, sid), (False, None)] if action == "device_quote" else [(True, sid)])
-        if action == "periods":
-            assert "Универсальный" in session.calls[-1].text
-        if intent == "upgrade":
-            assert "Стандартный" not in session.calls[-1].text
-        if action == "device_quote":
-            choices = [item.data for item in app.actions.values() if item.data.get("intent") == "devices"]
-            assert choices and all(value["product_id"] == "universal" for value in choices)
+        await app.dispatcher.feed_update(app.bot, message_update(text="/start"))
+        assert session.calls[-1].reply_markup.inline_keyboard
+        assert reads == [(True, sub["id"])]
 
     asyncio.run(run())
 
 
-def test_operation_entry_rejects_failed_panel_refresh_without_stale_choices():
-    from sunrise_core.errors import DomainError
+@pytest.mark.parametrize("reason", ["expiry_cleanup", "manual_panel", "verified_panel_absence"])
+def test_deletion_notice_uses_exact_reason(reason):
+    async def run():
+        app, service, session, _ = tracked_setup()
+        original = service.dashboard
+        service.dashboard = lambda *args, **kwargs: (
+            original(*args, **kwargs)
+            | {
+                "subscription_deletion_notices": [
+                    {
+                        "subscription_id": "removed",
+                        "name": "Удалённая",
+                        "reason": reason,
+                        "deleted_at": "2026-10-22T00:00:00Z",
+                    }
+                ]
+            }
+        )
+        await app.execute("101", AID, "subscriptions", {}, None, "")
+        text = session.calls[-1].text
+        assert (
+            "Ваша подписка удалена, поскольку после окончания её срока действия прошло 7 дней." in text
+        ) is (reason == "expiry_cleanup")
+        assert ("Подписка была удалена. Если это ошибка" in text) is (reason != "expiry_cleanup")
+
+    asyncio.run(run())
+
+
+def test_server_authorized_finite_renewal_does_not_infer_device_count():
+    async def run():
+        app, service, session, reads = tracked_setup()
+        sub = service.subscriptions[0]
+        sub.update(
+            status="expired",
+            devices_limit=None,
+            renewal_pricing_state="blocked",
+            renewal_pricing_error="panel_capacity_unpriced",
+            renewal_device_limit_required=True,
+        )
+        await app.execute("101", AID, "periods", {"sid": sub["id"], "intent": "renew"}, None, "")
+        assert "Новый срок будет рассчитан с конечным лимитом устройств по тарифу" in session.calls[-1].text
+        assert reads == [(True, sub["id"])]
+        assert not any(call[0] == "create" for call in service.calls)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("inbound", ["message", "callback", "foreign_chat", "group"])
+def test_only_fresh_private_owner_activity_resumes_telegram_delivery(inbound):
+    from test_dispatcher import callback_update, find_button, message_update
 
     async def run():
+        app, service, session, _ = tracked_setup()
+        resumed = []
+        service.resume_telegram_notifications = lambda aid, telegram_id: resumed.append((aid, telegram_id))
+        if inbound == "callback":
+            await app.dispatcher.feed_update(app.bot, message_update())
+            resumed.clear()
+            update = callback_update(find_button(session, "Подписки"))
+        else:
+            update = message_update()
+            if inbound == "foreign_chat":
+                update = update.model_copy(
+                    update={
+                        "message": update.message.model_copy(
+                            update={"chat": update.message.chat.model_copy(update={"id": 102})}
+                        )
+                    }
+                )
+            if inbound == "group":
+                update = update.model_copy(
+                    update={
+                        "message": update.message.model_copy(
+                            update={"chat": update.message.chat.model_copy(update={"type": "group"})}
+                        )
+                    }
+                )
+        await app.dispatcher.feed_update(app.bot, update)
+        assert resumed == ([(AID, 101)] if inbound in {"message", "callback"} else [])
+
+    asyncio.run(run())
+
+
+def test_device_menu_entry_refreshes_owned_subscription_once_before_inventory():
+    async def run():
         app, service, _, reads = tracked_setup()
-        service.subscriptions[0].update(panel_sync_state="stale", renewal_pricing_state="blocked")
         sid = service.subscriptions[0]["id"]
-        with pytest.raises(DomainError) as failure:
-            await app.execute(
-                "101", AID, "periods", {"sid": sid, "intent": "renew", "product_id": "standard"}, None, ""
-            )
-        assert failure.value.code == "panel_sync_required"
+        await app.execute("101", AID, "devices", {"sid": sid}, None, "")
         assert reads == [(True, sid)]
+
+    asyncio.run(run())
+
+
+def test_blocked_rotation_hides_duplicate_controls_and_reports_review():
+    from test_v7_device_parity import PanelOperations
+
+    async def run():
+        app, service, session, _ = tracked_setup()
+        app.customer_operations = PanelOperations()
+        sub = service.subscriptions[0]
+        sub["credential_rotation_state"] = "blocked"
+        await app.execute("101", AID, "devices", {"sid": sub["id"]}, None, "")
+        assert "требуется ручная проверка" in session.calls[-1].text
+        buttons = [b.text for row in session.calls[-1].reply_markup.inline_keyboard for b in row]
+        assert not any("Перевыпустить ссылку" in label for label in buttons)
 
     asyncio.run(run())
