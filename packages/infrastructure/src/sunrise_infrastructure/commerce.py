@@ -1407,7 +1407,7 @@ class Commerce:
                     basis["device_segment_adjustments"] = segment_adjustments
                     devices += extra_devices
                 else:
-                    if sub.devices_limit > old.included_devices and not basis.get("device_pricing_included"):
+                    if active.devices > old.included_devices and not basis.get("device_pricing_included"):
                         raise DomainError(
                             "valuation_unknown", "Стоимость оплаченных устройств требует проверки владельцем."
                         )

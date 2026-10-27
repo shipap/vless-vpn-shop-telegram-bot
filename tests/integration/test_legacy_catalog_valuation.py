@@ -140,6 +140,50 @@ def test_imported_devices_quote_is_fixed_catalog_price_and_does_not_create_histo
         assert basis["legacy_catalog"]["origin"] == "legacy_catalog"
 
 
+@pytest.fixture
+def legacy_null_catalog(legacy_catalog):
+    from sunrise_infrastructure.panel_entitlements import override_key
+
+    db, _, state, sid, _, expiry = legacy_catalog
+    evidence = {
+        "kind": "explicit_null_preserved",
+        "present": True,
+        "source": "authenticated_panel_snapshot",
+        "until": expiry.isoformat(),
+    }
+    with db.transaction() as session:
+        session.get(Subscription, sid).devices_limit = None
+        root = session.get(Setting, production_binding_key(sid))
+        root.value = root.value | {"capacity_evidence": evidence}
+        marker = session.get(Setting, override_key(sid))
+        marker.value = marker.value | {"devices_limit": None, "capacity_evidence": evidence}
+        session.add(Setting(key="legacy_null_device_limit", value={"mode": "catalog_included"}))
+    state["user"]["hwidDeviceLimit"] = None
+    return legacy_catalog
+
+
+def test_null_catalog_devices_acceptance_and_next_slot_preserve_expiry_and_identity(legacy_null_catalog):
+    db, _, _, sid, _, expiry = legacy_null_catalog
+    first = quote(legacy_null_catalog, extra_devices=1)
+    assert first["total"] == "50.00"
+    fulfill(legacy_null_catalog, first["id"], "null-first-device")
+    complete_target(legacy_null_catalog)
+    second = quote(legacy_null_catalog, extra_devices=1)
+    assert second["total"] == "50.00"
+    fulfill(legacy_null_catalog, second["id"], "null-second-device")
+    with db.transaction() as session:
+        sub = session.get(Subscription, sid)
+        assert sub.devices_limit == 6 and sub.expires_at == expiry
+        assert sub.panel_user_id == 8 and sub.panel_uuid == "22222222-2222-4222-8222-222222222222"
+        segments = list(session.scalars(select(Segment).where(Segment.subscription_id == sid)))
+        assert len(segments) == 1 and segments[0].paid_value == Decimal("100")
+
+
+def test_null_catalog_upgrade_uses_valued_devices_without_comparing_null(legacy_null_catalog):
+    result = quote(legacy_null_catalog, action="upgrade", product="legacy-premium")
+    assert result["total"] == "100.00" and result["devices_limit"] == 4
+
+
 def test_imported_devices_acceptance_preserves_identity_expiry_and_is_idempotent(legacy_catalog):
     db, commerce, _, sid, aid, expiry = legacy_catalog
     result = quote(legacy_catalog, extra_devices=1)

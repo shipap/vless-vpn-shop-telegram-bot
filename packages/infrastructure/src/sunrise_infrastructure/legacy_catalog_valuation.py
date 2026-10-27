@@ -18,9 +18,11 @@ def catalog_snapshot(session, currency):
     """Pin both versions and relevant values, including non-versioned period settings."""
     periods = session.get(Setting, "periods")
     mapping = session.get(Setting, "panel_mapping")
+    null_capacity = session.get(Setting, "legacy_null_device_limit")
     return {
         "periods": deepcopy(periods.value if periods else []),
         "panel_mapping": deepcopy(mapping.value if mapping else {}),
+        "legacy_null_device_limit": deepcopy(null_capacity.value if null_capacity else None),
         "products": {
             item.id: {
                 "version": item.version,
@@ -94,6 +96,26 @@ def catalog_projection(session, sub, moment):
         raise DomainError("no_paid_segment", "Нет действующего периода доступа.", 409)
     source = session.get(Product, marker.get("panel_product_id"))
     devices = marker.get("devices_limit")
+    capacity_basis = None
+    if devices is None and source:
+        policy = session.get(Setting, "legacy_null_device_limit")
+        if (
+            not policy
+            or policy.value != {"mode": "catalog_included"}
+            or entitlements.imported_null_capacity(session, sub, moment) is None
+            or not source.available
+            or source.id != sub.product_id
+            or marker.get("panel_product_state") != "matched"
+        ):
+            return None
+        # Some installations explicitly define NULL as their catalog's base allowance.
+        # Preserve the observed NULL; only an accepted paid operation publishes a finite target.
+        devices = source.included_devices
+        capacity_basis = {
+            "origin": "catalog_included_for_imported_null",
+            "panel_devices_limit": None,
+            "included_devices": devices,
+        }
     if not source or type(devices) is not int or not 1 <= devices <= 100:
         return None
     snapshot = catalog_snapshot(session, source.currency)
@@ -174,6 +196,7 @@ def catalog_projection(session, sub, moment):
                 "product_id": source.id,
                 "devices": devices,
                 "catalog": snapshot,
+                **({"capacity_basis": capacity_basis} if capacity_basis else {}),
             },
         },
     )
@@ -204,6 +227,32 @@ def require_accepted_import(session, sub, basis):
     provenance = basis.get("legacy_catalog") or {}
     if not provenance.get("pending"):
         return
+    capacity_basis = provenance.get("capacity_basis")
+    if capacity_basis is not None:
+        policy = session.get(Setting, "legacy_null_device_limit")
+        marker = entitlements.imported_baseline(session, sub)
+        source = session.get(Product, provenance.get("product_id"))
+        if (
+            not policy
+            or policy.value != {"mode": "catalog_included"}
+            or not marker
+            or marker.get("devices_limit") is not None
+            or entitlements.imported_null_capacity(session, sub) is None
+            or not source
+            or not source.available
+            or source.id != sub.product_id
+            or marker.get("panel_product_id") != source.id
+            or marker.get("panel_product_state") != "matched"
+            or type(source.included_devices) is not int
+            or not 1 <= source.included_devices <= 100
+            or capacity_basis != {
+                "origin": "catalog_included_for_imported_null",
+                "panel_devices_limit": None,
+                "included_devices": source.included_devices,
+            }
+            or provenance.get("devices") != source.included_devices
+        ):
+            raise DomainError("valuation_unknown", "Базовый лимит перенесённой подписки изменился.", 409)
     if (
         provenance.get("origin") != "legacy_catalog"
         or provenance.get("subscription_id") != sub.id
