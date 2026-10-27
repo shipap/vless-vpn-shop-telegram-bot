@@ -142,6 +142,87 @@ def test_explicit_empty_description_removes_old_ast_and_preserves_name():
     assert result["content"]["name"] == row.content["name"]
 
 
+@pytest.mark.parametrize("field", ["name", "description"])
+@pytest.mark.parametrize("resend_old_content", [False, True])
+def test_catalog_copy_edit_preserves_readonly_legacy_metadata(field, resend_old_content):
+    row = product()
+    metadata = {"source": "synthetic-import", "revision": 1}
+    row.content["legacy_item_data_preserved_in"] = deepcopy(metadata)
+    old_content = deepcopy(row.content)
+    patch = {field: "Новый текст"}
+    if resend_old_content:
+        patch["content"] = deepcopy(old_content)
+    original_patch = deepcopy(patch)
+    admin = admin_for(row)
+    result = admin.catalog_update("synthetic-owner", row.id, patch, "Правка текста")
+    assert result[field] == "Новый текст"
+    assert result["content"][field] == telegram_html_to_content("Новый текст")
+    assert result["content"]["legacy_item_data_preserved_in"] == metadata
+    other = "description" if field == "name" else "name"
+    assert result["content"][other] == old_content[other]
+    assert patch == original_patch
+    assert result["version"] == 8 and len(admin.audit_records) == 1
+
+
+@pytest.mark.parametrize("resend_old_ast", [False, True])
+def test_plain_name_edit_replaces_only_stale_name_ast(resend_old_ast):
+    row = product()
+    original_description = deepcopy(row.content["description"])
+    patch = {"name": "Новое название"}
+    if resend_old_ast:
+        patch["content"] = deepcopy(row.content)
+    result = admin_for(row).catalog_update("synthetic-owner", row.id, patch, "Правка названия")
+    assert result["content"]["name"] == telegram_html_to_content("Новое название")
+    assert result["content"]["description"] == original_description
+
+
+@pytest.mark.parametrize("field", ["name", "description"])
+def test_fresh_premium_ast_wins_with_legacy_metadata(field):
+    row = product()
+    row.content["legacy_item_data_preserved_in"] = "synthetic-private-record"
+    explicit = [{"type": "emoji", "id": "9007199254740993", "fallback": "🌐", "label": "Эмодзи"}]
+    patch = {field: "Новый текст", "content": {field: explicit}}
+    result = admin_for(row).catalog_update("synthetic-owner", row.id, patch, "Правка с эмодзи")
+    assert result["content"][field] == explicit
+    assert result["content"]["legacy_item_data_preserved_in"] == "synthetic-private-record"
+
+
+@pytest.mark.parametrize("unknown", ["legacy_item_data_preserved_in", "injected"])
+def test_content_patch_cannot_change_or_inject_unknown_keys(unknown):
+    row = product()
+    row.content["legacy_item_data_preserved_in"] = "synthetic-private-record"
+    before = deepcopy(vars(row))
+    admin = admin_for(row)
+    patch = {"name": "Новое", "content": {unknown: "changed"}}
+    with pytest.raises(DomainError, match="Неизвестное поле контента"):
+        admin.catalog_update("synthetic-owner", row.id, patch, "Недопустимая правка")
+    assert vars(admin.db.row) == before
+    assert admin.audit_records == []
+
+
+def test_name_and_description_sync_together_with_null_content():
+    row = product()
+    row.content["legacy_item_data_preserved_in"] = "synthetic-private-record"
+    result = admin_for(row).catalog_update(
+        "synthetic-owner", row.id,
+        {"name": "Новое название", "description": "Новое описание", "content": None},
+        "Правка обоих полей",
+    )
+    for field in ("name", "description"):
+        assert result["content"][field] == telegram_html_to_content(result[field])
+    assert result["content"]["legacy_item_data_preserved_in"] == "synthetic-private-record"
+
+
+def test_unchanged_name_preserves_premium_ast_and_null_name_is_omitted():
+    row = product()
+    row.content["name"] = telegram_html_to_content('<tg-emoji emoji-id="9007199254740993">🌐</tg-emoji>')
+    old_content = deepcopy(row.content)
+    admin = admin_for(row)
+    for value in (row.name, None):
+        result = admin.catalog_update("synthetic-owner", row.id, {"name": value}, "Без изменения имени")
+        assert result["name"] == "Тариф" and result["content"] == old_content
+
+
 @pytest.mark.parametrize(
     "patch",
     [

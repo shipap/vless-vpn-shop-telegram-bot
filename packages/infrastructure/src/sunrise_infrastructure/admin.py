@@ -1284,7 +1284,7 @@ class Admin:
             periods = self.commerce._setting(s, "periods", [])
             before = self._row(p, periods=periods)
             values = dict(values)
-            if values.get("description") is not None or values.get("content") is not None:
+            if any(values.get(field) is not None for field in ("name", "description", "content")):
                 current_content = p.content if p.content is not None else {}
                 incoming_content = values.get("content")
                 if not isinstance(current_content, dict) or (
@@ -1292,19 +1292,29 @@ class Admin:
                 ):
                     raise DomainError("content_invalid", "Проверьте структуру контента.", 400)
                 if incoming_content is not None:
+                    if any(
+                        key not in current_content or value != current_content[key]
+                        for key, value in incoming_content.items()
+                        if key not in {"name", "description"}
+                    ):
+                        raise DomainError("content_invalid", "Неизвестное поле контента", 400)
                     values["content"] = current_content | incoming_content
-                if values.get("description") is not None:
-                    description = values["description"]
-                    if not isinstance(description, str) or len(description) > 4000:
+                for field in ("name", "description"):
+                    text = values.get(field)
+                    if text is None:
+                        continue
+                    if field == "name" and (not isinstance(text, str) or not 1 <= len(text) <= 200):
+                        raise DomainError("catalog_invalid", "Название: от 1 до 200 символов.", 400)
+                    if field == "description" and (not isinstance(text, str) or len(text) > 4000):
                         raise DomainError("catalog_invalid", "Описание: до 4000 символов.", 400)
-                    if description != p.description and (
-                        "description" not in (incoming_content or {})
-                        or incoming_content["description"] == current_content.get("description")
+                    if text != getattr(p, field) and (
+                        field not in (incoming_content or {})
+                        or incoming_content[field] == current_content.get(field)
                     ):
                         from sunrise_core.telegram_content import telegram_html_to_content
 
-                        values["content"] = (current_content | (incoming_content or {})) | {
-                            "description": telegram_html_to_content(description)
+                        values["content"] = (values.get("content") or current_content) | {
+                            field: telegram_html_to_content(text)
                         }
             p.presentation = (p.presentation or {}) | presentation
             for key, value in values.items():
@@ -1331,10 +1341,9 @@ class Admin:
                     from sunrise_core.content import validate_content
 
                     try:
-                        if set(value) - {"name", "description"}:
-                            raise ValueError("Неизвестное поле контента")
-                        for nodes in value.values():
-                            validate_content(nodes)
+                        for field in ("name", "description"):
+                            if field in value:
+                                validate_content(value[field])
                     except ValueError as exc:
                         raise DomainError("content_invalid", str(exc), 400) from None
                 setattr(p, key, value)

@@ -455,7 +455,8 @@ def test_user_summary_is_compact_and_exposes_safe_credit_identity_and_audit():
         await admin.execute("101", "a1", "admin_user", {"target_id": "9"}, None)
         body = app.views[-1]["body"]
         assert "120,00 EUR" in body and "9007199254740999" in body
-        assert "Подписки: 25" in body and "x" * 80 not in body
+        assert "Подписки: 25" in body and "x" * 121 not in body
+        assert body.count("x" * 120) == 3
         assert any(data.get("section") == "audit" for _, _, data in app.views[-1]["buttons"])
 
     asyncio.run(run())

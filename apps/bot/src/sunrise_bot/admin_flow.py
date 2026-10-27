@@ -3,7 +3,7 @@
 import asyncio
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from secrets import token_urlsafe
 from time import monotonic
@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from sunrise_core.content import validate_content
 from sunrise_core.errors import DomainError
+from sunrise_core.telegram_content import telegram_html_to_content
 
 from sunrise_bot import copy
 from sunrise_bot.content import card, render_plain, safe_url
@@ -98,6 +99,18 @@ def money(value, currency="RUB"):
         number = Decimal(str(value))
         return f"{number:,.2f}".replace(",", " ").replace(".", ",") + " " + currency
     except InvalidOperation:
+        return "неизвестно"
+
+
+def account_date(value):
+    if not value:
+        return "неизвестно"
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        return moment.astimezone(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y %H:%M") + " МСК"
+    except (ValueError, TypeError):
         return "неизвестно"
 
 
@@ -385,6 +398,18 @@ class AdminFlow:
                 buttons.insert(0, self.button("Тест себе", "admin_broadcast_test"))
         elif draft.kind == "message":
             nodes = card("Предпросмотр сообщения", body) + draft.values["nodes"]
+        elif draft.kind == "product" and draft.values.get("content"):
+            nodes = card("Проверьте изменение", "")
+            for key, value in draft.values.items():
+                if key in {"name", "description"}:
+                    nodes += card(labels[key], "") + [
+                        {
+                            "type": "paragraph",
+                            "children": draft.values["content"].get(key) or telegram_html_to_content(value),
+                        }
+                    ]
+                elif key != "content":
+                    nodes += card("", f"{labels.get(key, key)}: {value}")
         await self.show(uid, "Проверьте изменение", body.strip(), buttons, mid, nodes=nodes)
 
     async def message(self, uid, account, message):
@@ -412,9 +437,7 @@ class AdminFlow:
                     value = telegram_content(message)
                 draft.values[key] = value
                 if key in {"name", "description"} and draft.kind == "product":
-                    draft.values.setdefault("content", dict(draft.context.get("content", {})))[key] = (
-                        telegram_content(message)
-                    )
+                    draft.values.setdefault("content", {})[key] = telegram_content(message)
                 draft.fields.pop(0)
                 await self.prompt(uid, draft)
             else:
@@ -886,6 +909,24 @@ class AdminFlow:
                 buttons,
                 mid,
                 back="admin_products",
+                nodes=card("Товар", "")
+                + [
+                    {
+                        "type": "paragraph",
+                        "children": (product.get("content") or {}).get("name")
+                        or telegram_html_to_content(product["name"]),
+                    },
+                    {
+                        "type": "paragraph",
+                        "children": (product.get("content") or {}).get("description")
+                        or telegram_html_to_content(product["description"]),
+                    },
+                ]
+                + card(
+                    "Параметры товара",
+                    f"Цена: {money(product['price'], product['currency'])}\n"
+                    f"Внутренняя группа: {product.get('internal_squad_uuid') or 'не задана'}",
+                ),
             )
         if action == "admin_product_add":
             return await self.draft_start(
@@ -1169,10 +1210,14 @@ class AdminFlow:
             f"Зарезервировано: {money(account.get('credit_reserved'), account.get('credit_currency') or 'RUB')}",
             f"Email подтверждён: {'да' if account.get('email_verified') else 'нет'}",
         ]
+        if account.get("created_at"):
+            lines.append("Регистрация: " + account_date(account["created_at"]))
         if account.get("telegram_username"):
             lines.insert(2, "Telegram: @" + account["telegram_username"])
         if "active_subscriptions_total" in result:
             lines.append("Активные подписки: " + str(result["active_subscriptions_total"]))
+        if "active_agreements_total" in result:
+            lines.append("Активные автопродления: " + str(result["active_agreements_total"]))
         if "inviter" in result:
             inviter = result["inviter"]
             identity = (
@@ -1221,6 +1266,26 @@ class AdminFlow:
             ("aliases", "Объединённые аккаунты"),
             ("audit", "Журнал действий"),
         ]
+        if not selected:
+            subscriptions = result.get("subscriptions", {})
+            statuses = {
+                "active": "активна",
+                "expired": "истекла",
+                "pending": "подключается",
+                "deleted": "удалена",
+            }
+            for subscription in subscriptions.get("items", [])[:3]:
+                status = subscription.get("status")
+                lines.append(
+                    "\n"
+                    + str(subscription.get("name") or "Подписка")[:120]
+                    + " · "
+                    + statuses.get(status, "состояние неизвестно")
+                    + "\nДо: "
+                    + account_date(subscription.get("expires_at"))
+                    + " · Лимит устройств: "
+                    + str(subscription.get("devices_limit") or "не задан в панели")
+                )
         for key, title in sections:
             if key not in result or selected and key != selected:
                 continue
@@ -1257,6 +1322,12 @@ class AdminFlow:
                     "action",
                     "target",
                     "reason",
+                    "subscription_id",
+                    "revoked",
+                    "last_seen_at",
+                    "confirmed_at",
+                    "mfa_verified",
+                    "provenance",
                 }
                 labels = {
                     "id": "ID",
@@ -1283,10 +1354,28 @@ class AdminFlow:
                     "action": "Действие",
                     "target": "Объект",
                     "reason": "Причина",
+                    "subscription_id": "Подписка",
+                    "revoked": "Отозвано",
+                    "last_seen_at": "Последняя активность",
+                    "confirmed_at": "Подтверждён",
+                    "mfa_verified": "MFA",
+                    "provenance": "Основание",
+                }
+                dates = {
+                    "expiry",
+                    "created_at",
+                    "expires_at",
+                    "next_charge_at",
+                    "revoked_at",
+                    "ends_at",
+                    "last_seen_at",
+                    "confirmed_at",
                 }
                 lines.append(
                     " · ".join(
-                        f"{labels[key]}: {str(value)[:80]}" for key, value in item.items() if key in allowed
+                        f"{labels[key]}: {account_date(value) if key in dates else ('да' if value else 'нет') if isinstance(value, bool) else str(value)[:80]}"
+                        for key, value in item.items()
+                        if key in allowed
                     )
                 )
             if not items:
