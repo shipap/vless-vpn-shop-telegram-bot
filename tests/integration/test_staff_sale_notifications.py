@@ -162,7 +162,17 @@ def test_common_fulfillment_classifies_sale_once_and_routes_to_linked_staff(
         for row in rows:
             assert row.title == "Новая покупка!"
             assert "Покупатель: @sale_buyer (ID: 701234567890123457)" in row.body
-            assert f"Товар: {title}: {quote.snapshot['product_name']} (30 дн.)" in row.body
+            product_line = f"Товар: {title}: {quote.snapshot['product_name']}"
+            if action in {"purchase", "renew"}:
+                assert product_line + " (30 дн.)" in row.body
+            else:
+                assert product_line + "\n" in row.body
+                assert "(30 дн.)" not in row.body
+                if action == "downgrade":
+                    assert "Срок подписки пересчитан." in row.body
+                    assert "Срок подписки сохранён." not in row.body
+                else:
+                    assert "Срок подписки сохранён." in row.body
             assert f"Сумма: {order.amount:.2f} RUB" in row.body
             assert "Бонусы:" not in row.body
             deliveries = list(

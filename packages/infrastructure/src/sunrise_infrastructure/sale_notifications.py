@@ -4,6 +4,12 @@ import re
 from datetime import timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
+_TERM_CHANGE_NOTICES = {
+    "upgrade": "Срок подписки сохранён.",
+    "devices": "Срок подписки сохранён.",
+    "downgrade": "Срок подписки пересчитан.",
+}
+
 
 def _field(value, fallback="не указано"):
     if value is None:
@@ -65,7 +71,12 @@ def staff_sale_content(account, order, snapshot):
     lines.extend(
         [
             "Тариф: " + _field(snapshot.get("product_name"), "название отсутствует в снимке заказа"),
-            "Период: " + period,
+            _TERM_CHANGE_NOTICES.get(action)
+            or (
+                "Период: " + period
+                if action in {"purchase", "renew"}
+                else "Период: не указан в снимке заказа"
+            ),
             "Устройств: " + _field(snapshot.get("devices_limit"), "не указано в снимке заказа"),
             f"Сумма заказа: {order.amount:.2f} {_field(order.currency)}",
             "Заказ: " + _field(order.id),
@@ -91,14 +102,20 @@ def paid_staff_sale_content(account, order, snapshot):
     }.get(snapshot.get("action"), "Заказ")
     name = _field(snapshot.get("product_name"), "название отсутствует в снимке заказа")
     days = snapshot.get("period_days") or (snapshot.get("basis") or {}).get("period_days")
-    period = f" ({days} дн.)" if type(days) is int and days > 0 else ""
+    period = (
+        f" ({days} дн.)"
+        if snapshot.get("action") in {"purchase", "renew"} and type(days) is int and days > 0
+        else ""
+    )
     method = (snapshot.get("payment_method") or {}).get("id")
     label = {"sbp": "СБП", "crypto": "Криптовалюта", "xrocket": "xRocket"}.get(
         method, "не указан в снимке заказа"
     )
+    term_notice = _TERM_CHANGE_NOTICES.get(snapshot.get("action"))
     lines = [
         "Покупатель: " + identity,
         f"Товар: {action}: {name}{period}",
+        *([term_notice] if term_notice else []),
         "Метод: " + label,
         f"Сумма: {order.amount:.2f} {_field(order.currency)}",
     ]
