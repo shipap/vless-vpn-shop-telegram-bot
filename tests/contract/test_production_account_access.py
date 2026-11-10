@@ -95,6 +95,68 @@ def test_missing_or_malformed_imported_access_proof_does_not_reenable_account(ac
     assert failure.value.status == 404
 
 
+def _access(identifier, state="active"):
+    return {
+        "version": 1,
+        "account_id": str(identifier),
+        "state": state,
+        "source": "legacy_user_is_active",
+        "source_account_id": str(identifier),
+    }
+
+
+def test_new_account_keeps_access_after_absorbing_active_imported_identity(access_context):
+    account, alias, tx, commerce, accounts = access_context
+    account.legacy_consent = {
+        "merged:" + str(alias.old_id): {"tos": True, "production_access": _access(alias.old_id)}
+    }
+    assert commerce._account(tx, str(account.id)) is account
+    assert commerce._account(tx, str(alias.old_id)) is account
+    assert accounts.session("synthetic-session-token")
+
+
+@pytest.mark.parametrize(
+    "merged",
+    [
+        {"production_access": _access(9007199254740995, "disabled")},
+        {"production_access": _access(9007199254740993)},
+        {"production_access": {"state": "active"}},
+        {"legacy_sources": {"synthetic": {}}},
+        {},
+        None,
+    ],
+)
+def test_merge_does_not_enable_disabled_or_unproven_imported_identity(access_context, merged):
+    account, alias, tx, commerce, _ = access_context
+    account.legacy_consent = {"merged:" + str(alias.old_id): merged}
+    with pytest.raises(DomainError) as failure:
+        commerce._account(tx, str(account.id))
+    assert failure.value.status == 404
+
+
+@pytest.mark.parametrize(
+    "consent",
+    [
+        {"merged:9007199254740999": {"production_access": _access(9007199254740999)}},
+        {
+            "merged:9007199254740995": {"production_access": _access(9007199254740995)},
+            "legacy_sources": {"synthetic": {}},
+        },
+        {
+            "merged:9007199254740995": {"production_access": _access(9007199254740995)},
+            "merged:9007199254740999": {"production_access": _access(9007199254740999, "disabled")},
+        },
+        {"merged:09007199254740995": {"production_access": _access(9007199254740995)}},
+    ],
+)
+def test_merged_access_requires_proven_alias_and_no_unproven_evidence(access_context, consent):
+    account, _, tx, commerce, _ = access_context
+    account.legacy_consent = consent
+    with pytest.raises(DomainError) as failure:
+        commerce._account(tx, str(account.id))
+    assert failure.value.status == 404
+
+
 @pytest.mark.parametrize("channel", ["site", "bot"])
 def test_authorized_staff_can_read_disabled_customer_history_without_reenabling_customer(
     access_context, monkeypatch, channel

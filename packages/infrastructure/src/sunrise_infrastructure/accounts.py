@@ -68,7 +68,9 @@ def require_account_access_in(session, account, policy):
     if "production_access" not in consent:
         # A new account has no historical evidence. Neither a missing import
         # flag nor a preserved panel binding is evidence of a new identity.
-        if consent:
+        # A new account that absorbed imported identities through a confirmed
+        # merge keeps access only while every absorbed identity proves it.
+        if consent and not _merged_access_proven_in(session, account, consent):
             raise missing()
         if session.scalar(text("SELECT to_regclass('users')")) is not None:
             if session.scalar(
@@ -88,18 +90,57 @@ def require_account_access_in(session, account, policy):
         if imported:
             raise missing()
         return
-    value = consent["production_access"]
-    if (
-        not isinstance(value, dict)
-        or set(value) != {"version", "account_id", "state", "source", "source_account_id"}
-        or type(value.get("version")) is not int
-        or value["version"] != 1
-        or value.get("account_id") != str(account.id)
-        or value.get("source_account_id") != str(account.id)
-        or value.get("source") != "legacy_user_is_active"
-        or value.get("state") != "active"
-    ):
+    if not _active_access_proof(consent["production_access"], str(account.id)):
         raise missing()
+
+
+def _active_access_proof(value, identifier):
+    return (
+        isinstance(value, dict)
+        and set(value) == {"version", "account_id", "state", "source", "source_account_id"}
+        and type(value.get("version")) is int
+        and value["version"] == 1
+        and value.get("account_id") == identifier
+        and value.get("source_account_id") == identifier
+        and value.get("source") == "legacy_user_is_active"
+        and value.get("state") == "active"
+    )
+
+
+def _merged_access_proven_in(session, account, consent):
+    """Evidence of a new account consists only of proven active merged identities."""
+    pending = [(consent, 0)]
+    visited = {account.id}
+    proven = False
+    while pending:
+        snapshot, depth = pending.pop()
+        if not isinstance(snapshot, dict) or not snapshot or depth > 32 or len(visited) > 256:
+            return False
+        for key, value in snapshot.items():
+            if not isinstance(key, str) or not key.startswith("merged:"):
+                return False
+            identifier = key[7:]
+            if (
+                not identifier.isascii()
+                or not identifier.isdecimal()
+                or not 1 <= len(identifier) <= 19
+                or identifier.startswith("0")
+                or int(identifier) > 9223372036854775807
+                or int(identifier) in visited
+                or not isinstance(value, dict)
+            ):
+                return False
+            visited.add(int(identifier))
+            alias = session.get(Alias, int(identifier))
+            if not alias or alias.canonical_id != account.id:
+                return False
+            if "production_access" in value:
+                if not _active_access_proof(value["production_access"], identifier):
+                    return False
+                proven = True
+            else:
+                pending.append((value, depth + 1))
+    return proven
 
 
 class Accounts:
