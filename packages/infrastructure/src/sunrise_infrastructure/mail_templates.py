@@ -103,6 +103,7 @@ def render_mail(subject: str, body: str, sender: str, *, instance=None, actions=
         )
         plain += "\n\n" + label + ": " + url
 
+    reason = "Это автоматическое письмо " + instance.app_name + ", отвечать на него не нужно."
     intro_html = (
         '<p style="margin:12px 0 0;font-size:16px;line-height:1.7;color:#555a62;">' + escape(intro) + "</p>"
         if intro
@@ -139,9 +140,10 @@ def render_mail(subject: str, body: str, sender: str, *, instance=None, actions=
         + "</td></tr>"
         '<tr><td style="padding:20px 24px;border-top:1px solid #ece6e0;">'
         '<p style="margin:0;font-size:12px;line-height:1.7;color:#676b72;">'
-        "Письмо от " + escape(instance.app_name) + "<br>Отправитель: " + escape(sender) + "</p></td></tr>"
+        "Письмо от " + escape(instance.app_name) + "<br>Отправитель: " + escape(sender)
+        + "<br>" + escape(reason) + "</p></td></tr>"
         "</table></td></tr></table></body></html>"
     )
     return RenderedMail(
-        subject, plain + "\n\nОтправитель: " + instance.sender_name + " <" + sender + ">", html
+        subject, plain + "\n\nОтправитель: " + instance.sender_name + " <" + sender + ">\n" + reason, html
     )

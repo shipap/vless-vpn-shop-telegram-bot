@@ -1,7 +1,6 @@
 """Напоминания и закрытые резервные копии разрешённой тестовой базы."""
 
 from datetime import datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -76,86 +75,198 @@ class Scheduler:
             )
             return 1
 
-    def remind(self, moment=None):
+    EXPIRY_REFRESH_INTERVAL = timedelta(minutes=30)
+    # Each refresh is one synchronous panel read inside the worker leader lock (30 s).
+    EXPIRY_REFRESH_BATCH = 5
+    EXPIRY_REFRESH_SECONDS = 12
+
+    def _expiry_candidates(self, moment, policy):
+        """Local expiry is only a hint for which reminder could be due and not yet sent."""
         from . import panel_entitlements
+        from .db import Agreement
+        from .renewal_reminders import reminder_bucket, reminder_window
         from .retention import fenced_in
 
-        moment = moment or now()
-        # Local candidates are hints. Stale observations never initiate fleet HTTP.
+        window = reminder_window(policy)
+        result = []
         with self.db.transaction() as session:
-            candidates = []
             for sub in session.scalars(
-                select(Subscription).where(
+                select(Subscription)
+                .where(
                     Subscription.expires_at.is_not(None),
                     Subscription.expires_at >= moment - timedelta(hours=24),
-                    Subscription.expires_at <= moment + timedelta(days=3),
+                    Subscription.expires_at <= moment + window,
                 )
+                .order_by(Subscription.expires_at, Subscription.id)
             ):
                 if fenced_in(session, sub):
                     continue
-                expiry = panel_entitlements.verified_service_horizon(session, sub, moment)
-                if panel_entitlements.bound(sub) and expiry is None:
-                    continue
-                expiry = expiry or sub.expires_at
-                if not moment - timedelta(hours=24) <= expiry <= moment + timedelta(days=3):
-                    continue
-                left = (expiry - moment).total_seconds()
-                bucket = "expired" if left <= 0 else "1d" if left <= 86400 else "3d"
-                key = f"expiry:{sub.id}:{expiry.isoformat()}:{bucket}"
+                # Automatic renewal handles these; a manual-renewal prompt would only push a cancellation.
                 if session.scalar(
-                    select(Notification.id).where(
-                        Notification.account_id == sub.account_id,
-                        Notification.event_key == key,
-                    )
+                    select(Agreement.id)
+                    .where(Agreement.subscription_id == sub.id, Agreement.state != "stopped")
+                    .limit(1)
                 ):
                     continue
-                candidates.append((sub.account_id, sub.id, sub.version, expiry, key, left))
+                hint = panel_entitlements.verified_service_horizon(session, sub, moment)
+                # Only a panel-bound subscription has panel data that may need a refresh.
+                fresh = hint is not None or not panel_entitlements.bound(sub)
+                hint = hint or sub.expires_at
+                bucket = reminder_bucket(policy, (hint - moment).total_seconds())
+                if bucket is None:
+                    continue
+                if fresh:
+                    # Exactly the key remind() would write for this term and bucket.
+                    sent = select(Notification.id).where(
+                        Notification.account_id == sub.account_id,
+                        Notification.event_key == f"expiry:{sub.id}:{hint.isoformat()}:{bucket}",
+                    )
+                else:
+                    # The verified horizon is unknown until the refresh; a reminder of this bucket for
+                    # the current term can only have been created inside the current reminder window.
+                    sent = select(Notification.id).where(
+                        Notification.account_id == sub.account_id,
+                        Notification.event_key.startswith(f"expiry:{sub.id}:"),
+                        Notification.event_key.endswith(":" + bucket),
+                        Notification.created_at >= moment - window - timedelta(hours=24),
+                    )
+                if session.scalar(sent.limit(1)):
+                    continue
+                result.append((sub.account_id, sub.id, fresh))
+        return result
+
+    def _refresh_expiry(self, owner, sid, moment):
+        """One targeted read of this project's own panel user, at most every 30 minutes.
+
+        Returns None when throttled (no panel request), else whether the refresh succeeded.
+        """
+        from .db import Setting
+
+        key = "expiry-refresh:" + sid
+        with self.db.transaction() as session:
+            session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"), {"key": key})
+            marker = session.get(Setting, key, with_for_update=True)
+            if marker:
+                try:
+                    last = datetime.fromisoformat(marker.value["attempted_at"])
+                except (KeyError, TypeError, ValueError):
+                    last = None
+                if last is not None and moment - last < self.EXPIRY_REFRESH_INTERVAL:
+                    return None
+                marker.value = {"attempted_at": moment.isoformat()}
+            else:
+                session.add(Setting(key=key, value={"attempted_at": moment.isoformat()}))
+        try:
+            results = self.commerce._refresh_panel(owner, sid)
+        except DomainError:
+            return False
+        return bool(results) and all(item.get("status") == "ok" for item in results.values())
+
+    def remind(self, moment=None):
+        import logging
+        import time
+
+        moment = moment or now()
+        with self.db.transaction() as session:
+            policy = self.commerce._setting(session, "discounts", {})
+        attempts = 0
+        started = time.monotonic()
         count = 0
         notifier = NotificationService(self.db, self.settings)
-        for owner, sid, version, expiry, key, left in candidates:
-            # The common pricing core still requires fresh scope under Account/Sub locks.
-            # No Order, bonus reservation, agreement or network request is created here.
-            try:
-                quote = self.commerce._renewal_offer(owner, sid)
-            except DomainError:
-                continue
-            with self.db.transaction() as session:
-                account = self.commerce._account(session, owner, True)
-                sub = self.commerce._sub(session, account.id, sid, True)
-                if (
-                    sub.version != version
-                    or fenced_in(session, sub)
-                    or panel_entitlements.verified_service_horizon(session, sub, moment) != expiry
-                    or session.scalar(
-                        select(Notification.id).where(
-                            Notification.account_id == account.id,
-                            Notification.event_key == key,
-                        )
-                    )
-                ):
+        for owner, sid, fresh in self._expiry_candidates(moment, policy):
+            if not fresh:
+                # Panel data is refreshed only for a subscription whose reminder is due now.
+                if self.commerce.panel_provider is None:
                     continue
-                body = f"Продление на {quote['period_days']} дней: {quote['total']} {quote['currency']}."
-                discount = quote.get("selected_secondary")
-                if discount and Decimal(discount["percent"]) > 0:
-                    body += f" Применённая скидка: {discount['percent']}%."
-                body += " Откройте расчёт и подтвердите оплату."
-                retention = self.commerce.retention.projection_in(session, sub)
-                if retention["cleanup_at"]:
-                    body += " Через 7 дней после окончания срока VPN-подписка будет удалена из панели. Аккаунт и история платежей сохранятся."
-                from .subscription_engagement import SubscriptionEngagement
-
-                notifier.emit_in(
-                    session,
-                    account.id,
-                    key,
-                    "subscription_expiry",
-                    "Подписка завершилась" if left <= 0 else "Срок подписки заканчивается",
-                    body,
-                    target="/#subscriptions",
-                    actions=[SubscriptionEngagement.action(sid, "renew", "Продлить", quote["id"])],
-                )
-                count += 1
+                if attempts >= self.EXPIRY_REFRESH_BATCH or time.monotonic() - started > self.EXPIRY_REFRESH_SECONDS:
+                    continue
+                try:
+                    refreshed = self._refresh_expiry(owner, sid, moment)
+                except Exception:  # noqa: BLE001 -- one subscription must never stop the worker tick
+                    logging.getLogger(__name__).warning("renewal reminder refresh skipped", exc_info=True)
+                    attempts += 1
+                    continue
+                if refreshed is None:
+                    continue
+                attempts += 1
+                if not refreshed:
+                    continue
+            try:
+                count += self._remind_one(notifier, policy, owner, sid, moment)
+            except Exception:  # noqa: BLE001 -- one subscription must never stop the worker tick
+                logging.getLogger(__name__).warning("renewal reminder skipped", exc_info=True)
         return count
+
+    def _remind_one(self, notifier, policy, owner, sid, moment):
+        from decimal import Decimal
+
+        from . import panel_entitlements
+        from .db import Quote
+        from .renewal_reminders import reminder_bucket, reminder_content
+        from .retention import fenced_in
+
+        # The price is optional: the reminder must not depend on a successful quote.
+        try:
+            quote = self.commerce._renewal_offer(owner, sid)
+        except DomainError:
+            quote = None
+        with self.db.transaction() as session:
+            account = self.commerce._account(session, owner, True)
+            sub = self.commerce._sub(session, account.id, sid, True)
+            if fenced_in(session, sub):
+                return 0
+            expiry = panel_entitlements.verified_service_horizon(session, sub, moment)
+            if expiry is None and (panel_entitlements.bound(sub) or sub.expires_at is None):
+                return 0
+            expiry = expiry or sub.expires_at
+            bucket = reminder_bucket(policy, (expiry - moment).total_seconds())
+            if bucket is None:
+                return 0
+            key = f"expiry:{sub.id}:{expiry.isoformat()}:{bucket}"
+            if session.scalar(
+                select(Notification.id).where(Notification.account_id == account.id, Notification.event_key == key)
+            ):
+                return 0
+            if quote and (
+                quote.get("subscription_id") not in {None, sub.id} or quote.get("action") not in {None, "renew"}
+            ):
+                quote = None
+            # The text names only the near-expiry discount the frozen quote actually applied.
+            applied = None
+            saved = session.get(Quote, quote["id"]) if quote else None
+            selected = (saved.snapshot.get("selected_secondary") or {}) if saved else {}
+            if selected.get("source") == "near_expiry_renewal":
+                applied = Decimal(str(selected["percent"]))
+            from .db import Product
+
+            product = session.get(Product, sub.product_id) if sub.product_id else None
+            title, body = reminder_content(
+                policy,
+                product_name=(product.name if product else None) or "VPN-подписка",
+                expiry=expiry,
+                moment=moment,
+                quote=quote,
+                applied_percent=applied,
+            )
+            retention = self.commerce.retention.projection_in(session, sub)
+            if retention["cleanup_at"]:
+                body += (
+                    "\n\nЧерез 7 дней после окончания срока VPN-подписка будет удалена из панели. "
+                    "Аккаунт и история платежей сохранятся."
+                )
+            from .subscription_engagement import SubscriptionEngagement
+
+            notifier.emit_in(
+                session,
+                account.id,
+                key,
+                "subscription_expiry",
+                title,
+                body,
+                target="/#subscriptions",
+                actions=[SubscriptionEngagement.action(sid, "renew", "Продлить", quote["id"] if quote else None)],
+            )
+            return 1
 
     def notify_ready(self, *, scoped_only=False):
         from .db import Quote

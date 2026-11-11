@@ -96,6 +96,9 @@ class SMTPTestMail:
         message["Message-ID"] = "<" + delivery_id + "@" + self.sender.split("@", 1)[1] + ">"
         message["Date"] = format_datetime(datetime.now(UTC))
         message["Content-Language"] = "ru"
+        # RFC 3834: automatic service mail; prevents auto-replies and vacation loops.
+        message["Auto-Submitted"] = "auto-generated"
+        message["X-Auto-Response-Suppress"] = "All"
         message.set_content(rendered.plain, charset="utf-8", cte="quoted-printable")
         message.add_alternative(rendered.html, subtype="html", charset="utf-8", cte="quoted-printable")
         if media is not None:

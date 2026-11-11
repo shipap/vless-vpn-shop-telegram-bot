@@ -521,7 +521,7 @@ def test_worker_tick_runs_scheduling_and_confirmed_cleanup(due_retention):
     worker.notifications = SimpleNamespace(deliver_pending=lambda: 0)
     worker.engagement = SubscriptionEngagement(commerce)
     worker.panel_events = SimpleNamespace(reconcile_pending=lambda: 0, nodes_snapshot=lambda: None)
-    worker.operational_monitor = SimpleNamespace(notify_owner=lambda: None)
+    worker.operational_monitor = SimpleNamespace(auto_acknowledge_deliveries=lambda: 0, notify_owner=lambda: None)
     worker._next_reminders = worker._next_panel_reconcile = moment
     worker.config = SimpleNamespace(panel_reconcile_interval_seconds=60)
     worker.tick()

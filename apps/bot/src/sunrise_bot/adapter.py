@@ -569,6 +569,14 @@ class BotApplication:
             return MenuAction(uid, "subscriptions", {"show_list": True}, float("inf"))
         if callback_data == "notice:main":
             return MenuAction(uid, "main", {}, float("inf"))
+        if callback_data.startswith("notice:renew:"):
+            import re
+
+            sid = callback_data.removeprefix("notice:renew:")
+            if re.fullmatch(r"[A-Za-z0-9_-]{1,50}", sid):
+                # Opens the renewal flow; the backend refreshes and checks the subscription owner.
+                return MenuAction(uid, "periods", {"sid": sid, "intent": "renew"}, float("inf"))
+            return None
         if self.accounts:
             from sunrise_core.notice_callbacks import parse_owner_notice_callback
 

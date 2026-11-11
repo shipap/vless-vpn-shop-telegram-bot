@@ -41,6 +41,63 @@ def test_near_expiry_renewal_strict_boundary(entitlement, monkeypatch, remaining
         assert segment.paid_value == Decimal("37.00")
 
 
+TIERS = [{"hours": 48, "percent": "15"}, {"hours": 24, "percent": "10"}, {"hours": 12, "percent": "5"}]
+
+
+@pytest.mark.parametrize(
+    "remaining,total,percent",
+    [
+        (timedelta(hours=48, seconds=1), "37.00", None),
+        (timedelta(hours=48), "31.45", "15"),
+        (timedelta(hours=30), "31.45", "15"),
+        (timedelta(hours=24), "33.30", "10"),
+        (timedelta(hours=13), "33.30", "10"),
+        (timedelta(hours=12), "35.15", "5"),
+        (timedelta(minutes=5), "35.15", "5"),
+        (timedelta(0), "37.00", None),
+        (timedelta(hours=-3), "37.00", None),
+    ],
+)
+def test_tiered_near_expiry_discount_follows_verified_remaining_time(
+    entitlement, monkeypatch, remaining, total, percent
+):
+    db, _, commerce, _, state, sid, pid, segment_id, original_end = entitlement
+    moment = now()
+    monkeypatch.setattr("sunrise_infrastructure.commerce.now", lambda: moment)
+    state["user"]["expireAt"] = (moment + remaining).isoformat()
+    with db.transaction() as session:
+        session.get(Setting, "discounts").value = {
+            "cap": "100",
+            "bonus_cap": "0",
+            "secondary": [],
+            "near_expiry_renewal": {"enabled": True, "percent": "10"},
+            "near_expiry_tiers": TIERS,
+        }
+    quote = commerce.quote(301, pid, 30, "renew", sid)
+    assert Decimal(quote["total"]) == Decimal(total)
+    selected = quote["selected_secondary"]
+    if percent is None:
+        assert not selected or selected["source"] != "near_expiry_renewal"
+    else:
+        assert selected["source"] == "near_expiry_renewal" and Decimal(selected["percent"]) == Decimal(percent)
+    with db.transaction() as session:
+        assert session.get(Segment, segment_id).ends_at == original_end
+
+
+def test_disabled_campaign_ignores_tiers(entitlement):
+    db, _, commerce, _, state, sid, pid, _, _ = entitlement
+    state["user"]["expireAt"] = (now() + timedelta(hours=30)).isoformat()
+    with db.transaction() as session:
+        session.get(Setting, "discounts").value = {
+            "cap": "100",
+            "bonus_cap": "0",
+            "secondary": [],
+            "near_expiry_renewal": {"enabled": False, "percent": "10"},
+            "near_expiry_tiers": TIERS,
+        }
+    assert Decimal(commerce.quote(301, pid, 30, "renew", sid)["total"]) == Decimal("37.00")
+
+
 def test_untouched_future_paid_horizon_excludes_near_expiry_discount(entitlement):
     db, _, commerce, _, state, sid, pid, _, _ = entitlement
     moment = now()

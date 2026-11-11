@@ -155,9 +155,91 @@ def operational_alert_body(snapshot, *, local_test=False):
     )
 
 
+AUTO_DELIVERY_REVIEW_AFTER = timedelta(hours=24)
+AUTO_DELIVERY_REVIEW_BATCH = 200
+
+
+def backup_superseded_clause():
+    """A failed backup stops being a signal once a newer backup for the same owner succeeded.
+
+    The failed job and its history are kept unchanged; only the attention count ignores it.
+    A newer copy counts only when it is done and, where a document delivery is tracked,
+    that delivery was confirmed.
+    """
+    newer = Job.__table__.alias("newer_backup")
+    delivery = newer.c.payload["document_delivery"]
+    return (
+        select(newer.c.id)
+        .where(
+            newer.c.kind == "daily_backup",
+            newer.c.state == "done",
+            newer.c.account_id == Job.account_id,
+            newer.c.available_at > Job.available_at,
+            or_(
+                delivery.as_string().is_(None),
+                delivery["state"].as_string() == "delivered",
+            ),
+        )
+        .correlate(Job)
+        .exists()
+    )
+
+
 class OperationalMonitor:
     def __init__(self, db, settings):
         self.db, self.settings = db, settings
+
+    def auto_acknowledge_deliveries(self, older_than=AUTO_DELIVERY_REVIEW_AFTER):
+        """Close stale delivery review signals exactly like the owner's «Решено» button.
+
+        The delivery row is not changed and nothing is resent: an unknown or rejected
+        Telegram/email delivery can never be retried safely. A marker plus an Audit row
+        record that the system acknowledged the signal.
+        """
+        from .db import Audit
+
+        moment = now()
+        acknowledged = 0
+        with self.db.transaction() as session:
+            session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended('operational-alert',0))"))
+            rows = session.execute(
+                select(NotificationDelivery, Notification)
+                .join(Notification, Notification.id == NotificationDelivery.notification_id)
+                .where(
+                    NotificationDelivery.state == "review",
+                    NotificationDelivery.available_at <= moment - older_than,
+                    ~delivery_reviewed_clause(),
+                )
+                .order_by(NotificationDelivery.available_at, NotificationDelivery.id)
+                .limit(AUTO_DELIVERY_REVIEW_BATCH)
+                .with_for_update(of=NotificationDelivery, skip_locked=True)
+            ).all()
+            for delivery, notification in rows:
+                binding = delivery_review_binding(delivery, notification)
+                value = {
+                    "version": 1,
+                    "binding": binding,
+                    "actor_id": "system",
+                    "reviewed_at": moment.isoformat(),
+                    "automatic": True,
+                }
+                marker = session.get(Setting, "delivery-review:" + delivery.id, with_for_update=True)
+                previous = marker.value if marker else None
+                if marker:
+                    marker.value = value
+                else:
+                    session.add(Setting(key="delivery-review:" + delivery.id, value=value))
+                session.add(
+                    Audit(
+                        actor_id=None,
+                        action="notification_delivery_reviewed",
+                        target=delivery.id,
+                        reason="Автоматически: доставка не подтверждена более суток, повторная отправка не выполняется.",
+                        details={"before": previous, "after": value},
+                    )
+                )
+                acknowledged += 1
+        return acknowledged
 
     def snapshot(self, limit=50):
         with self.db.transaction() as session:
@@ -175,6 +257,7 @@ class OperationalMonitor:
                 Job.state.in_(["review", "blocked", "failed"]),
                 (Job.state == "pending") & (Job.available_at <= cutoff),
             ),
+            ~((Job.kind == "daily_backup") & backup_superseded_clause()),
         )
         order_query = (
             select(Order)

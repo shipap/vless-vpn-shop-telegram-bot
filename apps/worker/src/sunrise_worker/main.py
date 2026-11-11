@@ -107,6 +107,7 @@ class Worker:
                 self.scheduler.remind()
                 if not self.runtime_policy.production:
                     self.scheduler.schedule()
+                self.operational_monitor.auto_acknowledge_deliveries()
                 self.operational_monitor.notify_owner()
                 self._next_reminders = now() + timedelta(minutes=1)
             completed += self.commerce.retention.run_jobs() if self._stage("retention") else 0

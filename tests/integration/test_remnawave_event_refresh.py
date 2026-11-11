@@ -164,7 +164,7 @@ def test_worker_tick_never_refreshes_node_fleet():
     worker.scheduler = SimpleNamespace(notify_ready=zero, remind=zero, schedule=zero, deliver_backups=zero)
     worker.broadcasts = SimpleNamespace(expand_pending=zero, report_completed=zero)
     worker.notifications = SimpleNamespace(deliver_pending=zero)
-    worker.operational_monitor = SimpleNamespace(notify_owner=zero)
+    worker.operational_monitor = SimpleNamespace(auto_acknowledge_deliveries=zero, notify_owner=zero)
     worker._next_reminders = worker._next_panel_reconcile = now()
     worker.config, worker.provider = SimpleNamespace(panel_reconcile_interval_seconds=60), None
     assert worker.tick() == 0

@@ -105,6 +105,18 @@ def test_broadcast_dynamic_content_is_escaped_and_has_no_active_html_or_remote_a
     assert "display:none" not in html and "@import" not in html and "<link" not in html
 
 
+def test_service_mail_is_marked_automatic_and_says_so_in_the_footer():
+    mail, smtp = transport()
+    mail.deliver("payer@example.test", "Срок подписки заканчивается", "Продлите подписку.", "expiry-mail")
+    message = smtp.messages[0][0]
+    assert message["Auto-Submitted"] == "auto-generated"
+    assert message["X-Auto-Response-Suppress"] == "All"
+    assert message["Date"] and message["Message-ID"] == "<expiry-mail@example.test>"
+    reason = "Это автоматическое письмо Северный VPN, отвечать на него не нужно."
+    assert reason in message.get_body(preferencelist=("plain",)).get_content()
+    assert reason in message.get_body(preferencelist=("html",)).get_content()
+
+
 def test_mail_retry_keeps_one_stable_message_id_and_original_recipient():
     mail, smtp = transport()
     for _ in range(2):

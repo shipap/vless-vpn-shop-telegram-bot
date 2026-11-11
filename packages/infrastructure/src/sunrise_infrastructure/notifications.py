@@ -361,18 +361,20 @@ class NotificationService:
                 continue
             metadata = action["metadata"]
             expected = (
-                {"subscription_id", "quote_id"} if action["operation"] == "renew" else {"subscription_id"}
+                ({"subscription_id", "quote_id"}, {"subscription_id"})
+                if action["operation"] == "renew"
+                else ({"subscription_id"},)
             )
             if (
                 not isinstance(metadata, dict)
-                or set(metadata) != expected
+                or set(metadata) not in expected
                 or not all(isinstance(value, str) and 1 <= len(value) <= 64 for value in metadata.values())
             ):
                 continue
             sub = session.get(Subscription, metadata["subscription_id"])
             if sub is None or sub.account_id != item.account_id or fenced_in(session, sub):
                 continue
-            if action["operation"] == "renew":
+            if action["operation"] == "renew" and "quote_id" in metadata:
                 quote = session.get(Quote, metadata["quote_id"])
                 if (
                     quote is None
@@ -913,11 +915,14 @@ class NotificationService:
             return False
         if (current_expiry or subscription.expires_at) != expiry:
             return False
-        seconds = (expiry - now()).total_seconds()
-        current = (
-            "expired" if seconds <= 0 else "1d" if seconds <= 86400 else "3d" if seconds <= 259200 else None
+        from .renewal_reminders import bucket_is_current
+
+        policy = session.get(Setting, "discounts")
+        return bucket_is_current(
+            policy.value if policy and isinstance(policy.value, dict) else {},
+            bucket,
+            (expiry - now()).total_seconds(),
         )
-        return current == bucket and seconds >= -86400
 
     def deliver_pending(self, limit=20, *, scoped_only=False):
         if self.runtime_policy:
@@ -1203,6 +1208,7 @@ class NotificationService:
             "connection_help": "help_heading",
             "subscription_deleted": "error_heading",
             "subscription_deleted_owner": "error_heading",
+            "subscription_expiry": "quote_expiry",
         }.get(kind, "notifications_heading")
         title_nodes = [
             {
@@ -1211,6 +1217,33 @@ class NotificationService:
             }
         ]
         nodes = payload.get("nodes") or []
+        telegram_only_nodes = False
+        if (
+            not nodes
+            and kind == "subscription_expiry"
+            and len(payload["body"]) <= 4000
+            and len(payload["body"].split("\n")) <= 20
+        ):
+            from .renewal_reminders import TELEGRAM_LINE_ICONS
+
+            # Emoji are presentation for Telegram; e-mail keeps the plain stored text.
+            telegram_only_nodes = True
+            for index, line in enumerate(payload["body"].split("\n")):
+                if index:
+                    nodes.append({"type": "br"})
+                if not line:
+                    continue
+                for prefix, key, fallback in TELEGRAM_LINE_ICONS:
+                    if line.startswith(prefix):
+                        nodes.extend([emoji(key, fallback), {"type": "text", "text": " "}])
+                        break
+                label, separator, rest = line.partition(": ")
+                if separator and label in {"Тариф", "Окончание"}:
+                    nodes.extend(
+                        [{"type": "text", "text": label + ": "}, {"type": "bold", "children": [{"type": "text", "text": rest}]}]
+                    )
+                else:
+                    nodes.append({"type": "text", "text": line})
         if (
             not nodes
             and kind in {"payment_received", "sale", "device_unlink"}
@@ -1286,6 +1319,7 @@ class NotificationService:
             **payload,
             "title_nodes": title_nodes,
             "nodes": nodes,
+            **({"telegram_only_nodes": True} if telegram_only_nodes else {}),
             "notice_icons": {
                 key: emoji(key, fallback)
                 for key, fallback in [
@@ -1294,9 +1328,30 @@ class NotificationService:
                     ("profile", "👤"),
                     ("admin_warn", "⚠️"),
                     ("admin_block", "⛔️"),
+                    ("renew", "🔄"),
                 ]
             },
         }
+
+    @staticmethod
+    def _renewal_buttons(payload):
+        """Telegram opens the bot's own renewal flow; the backend checks ownership again."""
+        if payload.get("kind") != "subscription_expiry" or payload.get("audience") != "account":
+            return []
+        import re
+
+        for action in payload.get("actions") or []:
+            metadata = action.get("metadata") if isinstance(action, dict) else None
+            sid = metadata.get("subscription_id") if isinstance(metadata, dict) else None
+            if action.get("operation") == "renew" and isinstance(sid, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,50}", sid):
+                button = {"text": "Продлить подписку", "callback_data": "notice:renew:" + sid}
+                icon = (payload.get("notice_icons") or {}).get("renew") or {}
+                if icon.get("id"):
+                    button["icon_custom_emoji_id"] = icon["id"]
+                else:
+                    button["text"] = (icon.get("fallback", "") + " " + button["text"]).strip()
+                return [[button]]
+        return []
 
     @staticmethod
     def _paid_payment_buttons(payload):
@@ -1517,8 +1572,11 @@ class NotificationService:
                     title_nodes=payload.get("title_nodes"),
                 )
                 actions = self._action_links(payload)
-                paid_buttons = self._paid_payment_buttons(payload) + self._owner_device_buttons(payload)
-                if payload.get("kind") == "device_unlink":
+                renewal_buttons = self._renewal_buttons(payload)
+                paid_buttons = (
+                    self._paid_payment_buttons(payload) + self._owner_device_buttons(payload) + renewal_buttons
+                )
+                if payload.get("kind") == "device_unlink" or renewal_buttons:
                     actions = []
                 if validate_authority:
                     _, media_bytes = self._validate_delivery(channel, recipient, payload, identifier)
@@ -1621,7 +1679,11 @@ class NotificationService:
                 raise DomainError("mail_unavailable", "Почта не настроена.", 503)
             from .mail import SMTPTestMail, render_mail_text
 
-            body = render_mail_text(payload["nodes"]) if payload["nodes"] else payload["body"]
+            body = (
+                render_mail_text(payload["nodes"])
+                if payload["nodes"] and not payload.get("telegram_only_nodes")
+                else payload["body"]
+            )
             actions = self._action_links(payload)
             if isinstance(transport, SMTPTestMail):
                 if media is not None and transport.media_store is None:

@@ -247,7 +247,7 @@ def test_actual_worker_backfills_archived_notice_after_late_verified_owner(archi
     worker.commerce.panel_provider = None  # This notice-only worker fixture has no panel transport.
     worker.broadcasts = SimpleNamespace(expand_pending=lambda: 0, report_completed=lambda: 0)
     worker.scheduler = SimpleNamespace(notify_ready=lambda: None, remind=lambda: None)
-    worker.operational_monitor = SimpleNamespace(notify_owner=lambda: None)
+    worker.operational_monitor = SimpleNamespace(auto_acknowledge_deliveries=lambda: 0, notify_owner=lambda: None)
     worker.panel_events = SimpleNamespace(reconcile_pending=lambda: 0)
     worker.engagement = SimpleNamespace(run_due=lambda: 0)
     worker.notifications = SimpleNamespace(deliver_pending=lambda: 0)

@@ -36,7 +36,7 @@ def test_live_worker_keeps_business_ticks_but_never_calls_synthetic_backup():
         deliver_backups=callback("synthetic_backup_delivery"),
     )
     worker.engagement = SimpleNamespace(run_due=callback("engagement"))
-    worker.operational_monitor = SimpleNamespace(notify_owner=callback("monitor"))
+    worker.operational_monitor = SimpleNamespace(auto_acknowledge_deliveries=lambda: 0, notify_owner=callback("monitor"))
     worker.archive_owner_notices = SimpleNamespace(run_pending=callback("archive_owner"))
     worker.panel_contacts = SimpleNamespace(run_pending=callback("contacts"))
     worker.notifications = SimpleNamespace(deliver_pending=callback("notices"))

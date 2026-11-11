@@ -25,6 +25,22 @@ def test_durable_notice_buttons_open_current_senders_navigation(token, title):
     asyncio.run(run())
 
 
+def test_reminder_renew_button_opens_renewal_of_that_subscription_for_the_clicker():
+    async def run():
+        app, service, session = setup()
+        sid = service.subscriptions[0]["id"]
+        await app.dispatcher.feed_update(app.bot, callback_update("notice:renew:" + sid))
+        screen = session.calls[-1].text
+        assert "Выберите период" in screen and "Стандартный" in screen
+        item = app.callback_action("notice:renew:" + sid, "202")
+        assert item.owner == "202" and item.action == "periods"
+        assert item.data == {"sid": sid, "intent": "renew"} and "account_id" not in item.data
+        for bad in ("notice:renew:", "notice:renew:a b", "notice:renew:x:y", "notice:renew:" + "a" * 51):
+            assert app.callback_action(bad, "202") is None
+
+    asyncio.run(run())
+
+
 def test_single_subscription_back_opens_list_then_exits_to_main():
     async def run():
         app, _, session = setup()

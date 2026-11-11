@@ -1162,18 +1162,30 @@ class Commerce:
                 if campaign.get("enabled"):
                     secondary.append(D(campaign["percent"]))
                     candidates.append({"source": "renewal_campaign", "percent": campaign["percent"]})
-                near_expiry = policy.get("near_expiry_renewal") or {}
+                from .renewal_reminders import campaign_enabled, near_expiry_percent, tiers_configured
+
                 horizon = panel_entitlements.verified_service_horizon(s, sub, moment)
-                if near_expiry.get("enabled") is True and horizon is not None:
+                if campaign_enabled(policy) and horizon is not None:
+                    near_percent = near_expiry_percent(policy, horizon - moment)
+                    # Configured tiers (even invalid ones, which fail closed) record the applied percent.
+                    tiered = tiers_configured(policy)
                     near_expiry_evidence = {
                         "evaluated_at": iso(moment),
                         "effective_horizon": iso(horizon),
-                        "percent": near_expiry["percent"],
+                        "percent": (
+                            (str(near_percent) if near_percent is not None else "0")
+                            if tiered
+                            else policy["near_expiry_renewal"].get("percent")
+                        ),
+                        **({"tiers": policy["near_expiry_tiers"]} if tiered else {}),
                     }
-                    if horizon - moment < timedelta(hours=24):
-                        secondary.append(D(near_expiry["percent"]))
+                    if near_percent is not None:
+                        secondary.append(near_percent)
                         candidates.append(
-                            {"source": "near_expiry_renewal", "percent": near_expiry["percent"]}
+                            {
+                                "source": "near_expiry_renewal",
+                                "percent": str(near_percent) if tiered else policy["near_expiry_renewal"]["percent"],
+                            }
                         )
             if action == "purchase" and self._welcome_eligible(s, a):
                 welcome = policy.get("referral_welcome") or {}
@@ -2299,12 +2311,14 @@ class Commerce:
         }
 
     def _manual_renewal_discount_projection(self, session, account, sub):
+        from .renewal_reminders import near_expiry_percent
+
         result = {"manual_renewal_discount_eligible": False, "manual_renewal_discount_percent": None}
         policy = self._setting(session, "discounts", {})
-        candidate = policy.get("near_expiry_renewal") or {}
         moment = now()
         horizon = panel_entitlements.verified_service_horizon(session, sub, moment)
-        if candidate.get("enabled") is not True or horizon is None or horizon - moment >= timedelta(hours=24):
+        near_percent = near_expiry_percent(policy, horizon - moment) if horizon is not None else None
+        if near_percent is None:
             return result
         try:
             self._assert_new_operations(session)
@@ -2320,14 +2334,18 @@ class Commerce:
                 .limit(1)
             ):
                 return result
-            percent, cap = D(candidate["percent"]), D(policy["cap"])
+            percent, cap = near_percent, D(policy["cap"])
             if not percent.is_finite() or not cap.is_finite() or not 0 < percent <= 100 or cap <= 0:
                 return result
         except (DomainError, ValueError, KeyError):
             return result
+        from .renewal_reminders import near_expiry_tiers
+
         return {
             "manual_renewal_discount_eligible": True,
-            "manual_renewal_discount_percent": candidate["percent"],
+            "manual_renewal_discount_percent": (
+                str(percent) if near_expiry_tiers(policy) else policy["near_expiry_renewal"]["percent"]
+            ),
         }
 
     def dismiss_deletion_notice(self, account_id, sid):
