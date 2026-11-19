@@ -390,12 +390,17 @@ class RetentionService:
             return "refund_unresolved"
         if session.scalar(select(Inbox.id).where(Inbox.state != "processed").limit(1)):
             return "inbox_unresolved"
+        from .operational_monitor import backup_superseded_clause
+
         if session.scalar(
             select(Job.id)
             .where(
                 Job.account_id == sub.account_id,
                 Job.id != job_id if job_id else True,
                 Job.state.in_(["pending", "in_flight", "review", "blocked"]),
+                # A failed backup already superseded by a newer delivered copy (the same rule
+                # as the attention count) never touches this subscription.
+                ~((Job.kind == "daily_backup") & backup_superseded_clause()),
             )
             .limit(1)
         ):

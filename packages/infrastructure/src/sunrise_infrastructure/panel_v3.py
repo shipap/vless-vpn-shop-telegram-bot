@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from .db import Alias, LegacyIssue
 from .panel import (
+    PanelMissing,
     PanelReview,
     PanelUnavailable,
     PanelUsernameConflict,
@@ -278,6 +279,8 @@ class RemnawaveV3:
         scoped.require("panel_mutation")
         self.validate_binding(binding)
         current = self._request("GET", "users/" + binding["user_id"], missing=True)
+        if current is None:
+            raise PanelMissing("panel_user_missing")
         self._identity(current, binding)
         self._connection(current, binding)
         before_patch()
@@ -953,6 +956,8 @@ class RemnawaveProduction(RemnawaveV3):
         ):
             raise PanelReview("panel_contact_invalid")
         current = self._request("GET", "users/" + binding["user_id"], missing=True)
+        if current is None:
+            raise PanelMissing("panel_user_missing")
         self._identity(current, binding)
         self._connection(current, binding)
         if all(name in current and current[name] == value for name, value in contacts.items()):

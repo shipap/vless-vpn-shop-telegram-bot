@@ -80,7 +80,8 @@ export function PaidHorizon({
     Number.isFinite(expires) &&
     horizon > expires ? (
     <p className="fine-print">
-      В истории оплачено до {date(subscription.paid_horizon)}
+      Оплачено продление до {date(subscription.paid_horizon)} Оно включится
+      автоматически, когда закончится текущий период.
     </p>
   ) : null;
 }

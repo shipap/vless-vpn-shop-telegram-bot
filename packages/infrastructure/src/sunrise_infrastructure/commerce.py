@@ -523,6 +523,13 @@ class Commerce:
             effective_expiry = max(
                 effective_expiry, panel_entitlements.paid_horizon(s, sub, moment) or effective_expiry
             )
+        elif active is not None and not marker and active.kind != "legacy_catalog":
+            # Legacy catalog access is extended only by its verified-identity branch above.
+            # A renewal paid before expiry is stored as the next segment; give the customer the
+            # whole contiguous paid time now instead of at the boundary. A gap is never bridged.
+            for item in panel_entitlements.segments(s, sub):
+                if item.starts_at > moment and item.starts_at - effective_expiry <= timedelta(seconds=1):
+                    effective_expiry = max(effective_expiry, item.ends_at)
         effective_access = effective_expiry > moment and (active is not None or marker is not None)
         local = prior_status if prior_status is not None else panel_entitlements.local_status(s, sub)
         prior_local_status = local
@@ -2731,6 +2738,10 @@ class Commerce:
                             "utm_start_event",
                             "subscription_cleanup",
                             "panel_route_sync",
+                            # Dedicated runners own these; the generic fallback below would
+                            # defer them as provider_unavailable before their runner sees them.
+                            "panel_contact",
+                            "subscription_engagement",
                         ]
                     ),
                 )

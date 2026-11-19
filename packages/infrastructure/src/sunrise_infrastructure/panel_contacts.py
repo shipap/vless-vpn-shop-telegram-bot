@@ -8,7 +8,7 @@ from sqlalchemy import select, text
 from sunrise_core.errors import DomainError
 
 from .db import Account, Job, Setting, Subscription, now, uid
-from .panel import PanelReview, PanelUnavailable
+from .panel import PanelMissing, PanelReview, PanelUnavailable
 
 
 def profile_contacts(account):
@@ -336,7 +336,7 @@ class PanelContactSync:
                             from .provisioning import Provisioning
 
                             try:
-                                _, _, job = Provisioning(self.db, self.panel, self.commerce)._production_rows(
+                                _, sub, job = Provisioning(self.db, self.panel, self.commerce)._production_rows(
                                     session, jid, sid, owner
                                 )
                             except (PanelReview, DomainError):
@@ -350,12 +350,27 @@ class PanelContactSync:
                             ):
                                 # Stop an owned rejected intent without touching
                                 # the foreign/archive marker or transport.
-                                job.state, job.last_error = "review", "panel_contact_scope_changed"
+                                from .subscription_archive import state_in as archive_state_in
+
+                                try:
+                                    archived = archive_state_in(session, sub) is not None
+                                except DomainError:
+                                    archived = False  # an unverifiable archive still needs review
+                                job.state, job.last_error = (
+                                    ("canceled", "panel_contact_subscription_archived")
+                                    if archived
+                                    else ("review", "panel_contact_scope_changed")
+                                )
                             return 0
                         if job.payload["goal_generation"] == generation and job.state in {
                             "pending",
                             "in_flight",
                         }:
+                            if isinstance(failure, PanelMissing):
+                                # The owned panel user is gone without a deletion event: retrying
+                                # every 30 s can never succeed, so stop for an operator instead.
+                                job.state, job.last_error = "review", "panel_user_missing"
+                                return 0
                             job.state, job.available_at = "pending", now() + timedelta(seconds=30)
                             job.last_error = (
                                 "panel_contact_review"

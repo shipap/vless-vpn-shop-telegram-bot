@@ -309,6 +309,36 @@ def test_current_scope_and_disabled_access_deny_contact_transport(live_contacts,
         assert job.state == "review"
 
 
+def test_verified_archive_closes_contact_job_instead_of_review(live_contacts, monkeypatch):
+    from sunrise_infrastructure import subscription_archive
+
+    db, commerce, aid, sid, _, calls, _ = live_contacts
+    service = enqueue(db, commerce, aid)
+    with db.transaction() as tx:
+        tx.add(Setting(key="archive:" + sid, value={"synthetic": "verified elsewhere"}))
+    monkeypatch.setattr(
+        subscription_archive, "state_in", lambda session, sub: object() if sub.id == sid else None
+    )
+    assert service.run_pending() == 0 and calls == []
+    with db.transaction() as tx:
+        job = tx.scalar(select(Job).where(Job.kind == "panel_contact"))
+        assert (job.state, job.last_error) == ("canceled", "panel_contact_subscription_archived")
+
+
+def test_missing_panel_user_stops_for_review_instead_of_retry_loop(live_contacts):
+    db, commerce, aid, _, _, calls, handlers = live_contacts
+    handlers["handle"] = lambda request: httpx.Response(404, json={})
+    service = enqueue(db, commerce, aid)
+    assert service.run_pending() == 0
+    assert "PATCH" not in calls
+    with db.transaction() as tx:
+        job = tx.scalar(select(Job).where(Job.kind == "panel_contact"))
+        assert (job.state, job.last_error) == ("review", "panel_user_missing")
+        job.available_at = now()
+    before = len(calls)
+    assert service.run_pending() == 0 and len(calls) == before
+
+
 def identity_accounts(item):
     import fakeredis
     from sunrise_infrastructure.accounts import Accounts

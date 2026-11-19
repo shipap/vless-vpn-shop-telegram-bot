@@ -291,6 +291,34 @@ def test_extension_gap_provision_payload_preserves_nonfinancial_access(entitleme
         assert len(list(tx.scalars(select(Segment)))) == 1
 
 
+@pytest.mark.parametrize("case", ["contiguous", "chain", "gap", "refunded"])
+def test_early_renewal_extends_panel_target_through_contiguous_paid_time_only(entitlement, case):
+    db, _, commerce, _, _, sid, product_id, segment_id, expiry = entitlement
+    basis = {"currency": "RUB", "period_days": 30, "products": {product_id: "37.00"}}
+    # Real renewals start a fraction of a millisecond after the current end.
+    starts = expiry + (timedelta(days=1) if case == "gap" else timedelta(microseconds=530))
+    with db.transaction() as tx:
+        tx.add(Segment(
+            subscription_id=sid, product_id=product_id, starts_at=starts, ends_at=starts + timedelta(days=30),
+            devices=4, paid_value=Decimal("37.00"), price_basis=basis,
+            kind="refunded" if case == "refunded" else "paid",
+        ))
+        if case == "chain":
+            tx.add(Segment(
+                subscription_id=sid, product_id=product_id, starts_at=starts + timedelta(days=30),
+                ends_at=starts + timedelta(days=37), devices=4, paid_value=Decimal("0.00"),
+                price_basis=basis, kind="promo_gift",
+            ))
+    expected = {
+        "contiguous": starts + timedelta(days=30),
+        "chain": starts + timedelta(days=37),
+    }.get(case, expiry)
+    with db.transaction() as tx:
+        target = commerce._provision_payload(tx, tx.get(Subscription, sid))
+        assert target["active_segment_id"] == segment_id
+        assert datetime.fromisoformat(target["expires_at"]) == expected
+
+
 @pytest.mark.parametrize("status", ["DISABLED", "LIMITED"])
 def test_manual_panel_status_is_truthful_and_never_reactivated_by_boundary(entitlement, status):
     db, _, commerce, _, state, sid, _, _, _ = entitlement

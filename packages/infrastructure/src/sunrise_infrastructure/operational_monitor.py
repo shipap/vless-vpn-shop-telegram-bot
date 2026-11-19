@@ -251,7 +251,14 @@ class OperationalMonitor:
         rows, counts = [], {}
         job_query = select(Job).where(
             Job.kind.in_(
-                ["provision", "credential_rotate", "cancel_agreement", "notification", "daily_backup"]
+                [
+                    "provision",
+                    "credential_rotate",
+                    "cancel_agreement",
+                    "notification",
+                    "daily_backup",
+                    "panel_contact",
+                ]
             ),
             or_(
                 Job.state.in_(["review", "blocked", "failed"]),

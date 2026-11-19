@@ -498,12 +498,28 @@ def archive_absence_in(session, commerce, sub, binding, *, reason, proof_id):
     if owner is not None:
         state = owner_deletion_intent_in(session, service, owner, state)
     session.add(Setting(key="archive:" + sub.id, value=state.model_dump()))
+    # The panel user is gone: an open contact sync for it can never apply and must not
+    # linger as an unresolved job of the account. Its history is kept, no panel call.
+    from .panel_contacts import contact_key
+
+    contact = session.scalar(select(Job).where(Job.key == contact_key(sub.id)).with_for_update())
+    contact_closed = bool(
+        contact is not None
+        and contact.kind == "panel_contact"
+        and contact.state in {"pending", "in_flight", "review"}
+    )
+    if contact_closed:
+        contact.state, contact.last_error = "canceled", "panel_contact_subscription_archived"
     session.add(
         Audit(
             action="subscription_archive",
             target=sub.id,
             reason="Подтверждено отсутствие собственного VPN-пользователя.",
-            details={"source": reason, "review_required": state.review_required},
+            details={
+                "source": reason,
+                "review_required": state.review_required,
+                "contact_job_closed": contact_closed,
+            },
         )
     )
     return state

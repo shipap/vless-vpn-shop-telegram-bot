@@ -216,7 +216,9 @@ test("pending panel changes preserve future paid rights and an actual unlimited 
   await page.goto("/");
   const card = page.locator(".subscription-card");
   await expect(card).toContainText("Изменения ещё применяются");
-  await expect(card).toContainText("В истории оплачено до 1 февраля 2027 г.");
+  await expect(card).toContainText(
+    "Оплачено продление до 1 февраля 2027 г. Оно включится автоматически, когда закончится текущий период.",
+  );
   await expect(card).toContainText("Без ограничения");
   await expect(card).not.toContainText("synthetic_private_error");
 });

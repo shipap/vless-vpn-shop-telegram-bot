@@ -513,6 +513,25 @@ def test_generic_dispatcher_preserves_route_claim_and_processes_normal_job(paid_
         assert normal_job.state == "done" and normal_job.attempts == 1
 
 
+def test_generic_dispatcher_leaves_dedicated_contact_and_engagement_jobs(paid_panel):  # noqa: F811
+    # Regression: the generic fallback deferred these as provider_unavailable before their
+    # dedicated runners saw them, so they never finished and blocked expiry cleanup.
+    db, _, commerce, account_id, sid, _, _, _ = paid_panel
+    due = now() - timedelta(seconds=1)
+    with db.transaction() as session:
+        for kind in ("panel_contact", "subscription_engagement"):
+            session.add(Job(
+                key="synthetic-dedicated:" + kind, kind=kind, account_id=account_id,
+                payload={"subscription_id": sid}, state="pending", available_at=due,
+            ))
+    commerce.run_jobs(limit=50)
+    with db.transaction() as session:
+        for kind in ("panel_contact", "subscription_engagement"):
+            job = session.scalar(select(Job).where(Job.key == "synthetic-dedicated:" + kind))
+            assert (job.state, job.attempts, job.last_error) == ("pending", 0, None)
+            assert job.available_at == due
+
+
 def test_no_available_products_removes_stale_membership_without_panel_get(paid_panel):  # noqa: F811
     db, config, commerce, _, _, _, _, calls = paid_panel
     with db.transaction() as session:

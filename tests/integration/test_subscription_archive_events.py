@@ -636,3 +636,65 @@ def test_manual_deletion_preserves_genuine_future_only_paid_segment(paid_creatio
         assert "Требуется проверка оплаченных прав: да" in owner_notice.body
         assert owner_notice.audience == "owner"
         assert "https://" not in owner_notice.body and "panel_user_id" not in owner_notice.body
+
+
+@pytest.mark.parametrize("contact_state", ["pending", "in_flight", "review"])
+def test_panel_deletion_archive_closes_open_contact_job_without_panel_call(paid_creation, contact_state):
+    from sunrise_infrastructure.db import Audit
+    from sunrise_infrastructure.panel_contacts import contact_key
+
+    db, _, commerce, config, state, _, aid, sid, _ = paid_creation
+    commerce.provisioning.run_jobs()
+    with db.transaction() as session:
+        session.add(Job(
+            key=contact_key(sid), kind="panel_contact", account_id=aid, state=contact_state,
+            payload={"subscription_id": sid, "goal": {"telegramId": None}}, attempts=3,
+        ))
+    events = PanelEvents(db, commerce.panel_provider, config)
+    assert events.accept(*signed_event("user.deleted"))["status"] == "accepted"
+    state["user"] = None
+    assert events.reconcile_pending() == 1
+    with db.transaction() as session:
+        job = session.scalar(select(Job).where(Job.key == contact_key(sid)))
+        assert (job.state, job.last_error, job.attempts) == ("canceled", "panel_contact_subscription_archived", 3)
+        assert job.payload == {"subscription_id": sid, "goal": {"telegramId": None}}
+        audit = session.scalar(select(Audit).where(Audit.action == "subscription_archive", Audit.target == sid))
+        assert audit.details["contact_job_closed"] is True
+    assert not any(method == "PATCH" for method, _ in state["calls"])
+
+
+def test_panel_deletion_archive_leaves_finished_contact_job_unchanged(paid_creation):
+    from sunrise_infrastructure.db import Audit
+    from sunrise_infrastructure.panel_contacts import contact_key
+
+    db, _, commerce, config, state, _, aid, sid, _ = paid_creation
+    commerce.provisioning.run_jobs()
+    with db.transaction() as session:
+        session.add(Job(key=contact_key(sid), kind="panel_contact", account_id=aid, state="done", payload={}))
+    events = PanelEvents(db, commerce.panel_provider, config)
+    assert events.accept(*signed_event("user.deleted"))["status"] == "accepted"
+    state["user"] = None
+    assert events.reconcile_pending() == 1
+    with db.transaction() as session:
+        assert session.scalar(select(Job).where(Job.key == contact_key(sid))).state == "done"
+        audit = session.scalar(select(Audit).where(Audit.action == "subscription_archive", Audit.target == sid))
+        assert audit.details["contact_job_closed"] is False
+
+
+@pytest.mark.parametrize("newer", ["delivered", "none", "undelivered"])
+def test_retention_ignores_only_superseded_failed_backup_of_the_account(due_retention, newer):
+    from datetime import timedelta
+
+    context, moment = due_retention
+    db, _, commerce, *_ = context
+    with db.transaction() as session:
+        session.add(Job(
+            key="synthetic-failed-backup", kind="daily_backup", account_id=301, state="review",
+            payload={}, available_at=now() - timedelta(days=2),
+        ))
+        if newer != "none":
+            session.add(Job(
+                key="synthetic-newer-backup", kind="daily_backup", account_id=301, state="done",
+                payload={"document_delivery": {"state": newer}}, available_at=now() - timedelta(days=1),
+            ))
+    assert commerce.retention.schedule_due(moment) == (1 if newer == "delivered" else 0)

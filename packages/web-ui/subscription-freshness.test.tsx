@@ -78,7 +78,9 @@ it("only displays valid paid rights beyond the current expiry", () => {
   };
   expect(
     renderToStaticMarkup(<PaidHorizon subscription={subscription} />),
-  ).toContain("В истории оплачено до 1 февраля 2027 г.");
+  ).toContain(
+      "Оплачено продление до 1 февраля 2027 г. Оно включится автоматически, когда закончится текущий период.",
+    );
   for (const paid_horizon of [
     null,
     "not-a-date",
