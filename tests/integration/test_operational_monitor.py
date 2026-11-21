@@ -104,6 +104,29 @@ def test_owner_alert_is_durable_deduplicated_and_excludes_revoked_owner(notifica
     assert monitor.notify_owner() == 0
 
 
+def test_unchanged_queue_is_not_repeated_hourly_and_own_alert_delivery_is_ignored(notification_context, monkeypatch):
+    from sunrise_infrastructure import operational_monitor
+    from sunrise_infrastructure.operational_monitor import OperationalMonitor
+
+    db, config, (owner, _, _) = notification_context
+    with db.transaction() as session:
+        session.add(Job(id="review", key="review", kind="provision", account_id=owner,
+                        payload={"order_id": "order-safe"}, state="review", available_at=now()))
+    monitor = OperationalMonitor(db, config)
+    assert monitor.notify_owner() == 1
+    later = now() + timedelta(hours=2)
+    monkeypatch.setattr(operational_monitor, "now", lambda: later)
+    with db.transaction() as session:
+        # The previous alert's own Telegram outcome became unknown: not a new reason to alert.
+        alert = session.scalar(select(Notification).where(Notification.kind == "operational_alert"))
+        session.add(NotificationDelivery(notification_id=alert.id, channel="telegram", recipient="1",
+                                         state="review", last_error="delivery_outcome_unknown"))
+    assert monitor.notify_owner() == 0
+    with db.transaction() as session:
+        session.add(Job(id="another", key="another", kind="provision", account_id=owner,
+                        payload={}, state="review", available_at=now()))
+    assert monitor.notify_owner() == 1
+
 def test_old_fulfilled_payment_is_not_reported_when_later_renewal_is_stalled(notification_context):
     from sunrise_infrastructure.operational_monitor import OperationalMonitor
 

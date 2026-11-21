@@ -299,6 +299,8 @@ class OperationalMonitor:
                     (NotificationDelivery.state == "pending") & (NotificationDelivery.available_at <= cutoff),
                 ),
                 ~delivery_reviewed_clause(),
+                # An undelivered alert must not become the next alert's reason.
+                Notification.kind != "operational_alert",
             )
         )
         for kind, query in [
@@ -453,7 +455,11 @@ class OperationalMonitor:
                     Account.telegram_id.in_(telegram_admin_ids(self.settings)),
                 )
             )
-            signature = hashlib.sha256(json.dumps(snapshot["counts"], sort_keys=True).encode()).hexdigest()
+            # The same unresolved records are announced once; only a new record (or a changed
+            # state) produces another message, never an hourly repeat of an unchanged queue.
+            signature = hashlib.sha256(
+                json.dumps(sorted(item["key"] + ":" + str(item["state"]) for item in snapshot["items"])).encode()
+            ).hexdigest()
             emitted, moment = 0, now()
             for owner in candidates:
                 if permissions.role_in(session, owner) != "owner":
@@ -462,7 +468,7 @@ class OperationalMonitor:
                 marker = session.get(Setting, marker_key)
                 if marker:
                     previous = datetime.fromisoformat(marker.value["notified_at"])
-                    if moment - previous < timedelta(hours=1):
+                    if marker.value.get("signature") == signature or moment - previous < timedelta(hours=1):
                         continue
                 bucket = int(moment.timestamp() // 3600)
                 NotificationService(self.db, self.settings).emit_in(
